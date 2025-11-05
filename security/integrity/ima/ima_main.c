@@ -725,7 +725,7 @@ EXPORT_SYMBOL_GPL(ima_file_hash);
  * bpf_process_measurement - collect/store measurement of BPF 
  * program
  */ 
-int bpf_process_measurement(struct bpf_prog *prog, char *id)
+static int bpf_process_measurement(struct bpf_prog *prog, char *id)
 {
 
 	static const char op[] = "ebpf-measure";
@@ -745,7 +745,7 @@ int bpf_process_measurement(struct bpf_prog *prog, char *id)
 	int result = -ENOMEM;
 	int violation = 0;
 	int length; 
-	char digest_hash[IMA_MAX_DIGEST_SIZE];
+	//char digest_hash[IMA_MAX_DIGEST_SIZE];
 	int digest_hash_len = hash_digest_size[ima_hash_algo];
 	struct bpf_insn *insn = prog->insnsi;
 
@@ -754,7 +754,7 @@ int bpf_process_measurement(struct bpf_prog *prog, char *id)
 	
 	iint.ima_hash = hash_hdr;
 	iint.ima_hash->algo = ima_hash_algo;
-	iint.ima_hash->length = hash_digest_size[ima_hash_algo];
+	iint.ima_hash->length = digest_hash_len;
 
 	result = ima_calc_buffer_hash(insn, sizeof(struct bpf_insn *), iint.ima_hash);
 	if (result < 0) {

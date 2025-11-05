@@ -1175,7 +1175,7 @@ static int ima_lsm_rule_init(struct ima_rule_entry *entry,
 static enum bpf_prog_type ima_parse_ebpf_prog_types(substring_t *substr)
 {
         unsigned int res = 0;
-        int idx;
+        // int idx;
         char *token;
         char *arg = match_strdup(substr);
         enum bpf_prog_type type = __MAX_BPF_PROG_TYPE;
@@ -1260,7 +1260,7 @@ static enum bpf_prog_type ima_parse_ebpf_prog_types(substring_t *substr)
 static enum bpf_attach_type ima_parse_ebpf_attach_type(substring_t *substr)
 {
         unsigned int res = 0;
-        int idx;
+        // int idx;
         char *token;
         char *arg = match_strdup(substr);
 	enum bpf_attach_type type = __MAX_BPF_ATTACH_TYPE;
@@ -1398,7 +1398,7 @@ static int ima_ebpf_rule_init(struct ima_rule_entry *entry, substring_t *args, i
 		entry->ebpf.hook = match_strdup(args);
 	} else if (ebpf_rule == EBPF_PROG_TYPE) {
 		entry->ebpf.type =  ima_parse_ebpf_prog_types(args); 
-	} else if (ebpf_rule = EBPF_ATTACH_TYPE) {
+	} else if (ebpf_rule == EBPF_ATTACH_TYPE) {
 		entry->ebpf.attach_type =  ima_parse_ebpf_attach_type(args);
 	
 	}
@@ -2135,14 +2135,17 @@ static int ima_parse_rule(char *rule, struct ima_rule_entry *entry)
 		case Opt_ebpf_hooks:
 			ima_log_string(ab, "ebpf_hooks", args[0].from);
                         result = ima_ebpf_rule_init(entry, args, EBPF_HOOK);
-
+			break;
+			
 		case Opt_ebpf_prog_type:	
 			ima_log_string(ab, "ebpf_prog_type", args[0].from);
                         result = ima_ebpf_rule_init(entry, args, EBPF_PROG_TYPE);
+                        break;
 
 		case Opt_ebpf_attach_type:
 			ima_log_string(ab, "ebpf_attach_type", args[0].from);
                         result = ima_ebpf_rule_init(entry, args, EBPF_ATTACH_TYPE);
+                        break;
 		
 		case Opt_err:
 			ima_log_string(ab, "UNKNOWN", p);

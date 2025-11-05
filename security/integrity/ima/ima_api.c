@@ -469,7 +469,7 @@ const char *ima_d_path(const struct path *path, char **pathbuf, char *namebuf)
  *
  * TODO(avery)
  */
-int ima_bpf_check_policy(enum bpf_prog_type, char *attach_point)
+int ima_bpf_check_policy(enum bpf_prog_type, const char *attach_point)
 {
 	return 1;
 }

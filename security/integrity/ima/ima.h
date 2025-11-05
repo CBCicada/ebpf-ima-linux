@@ -423,7 +423,7 @@ void ima_update_policy_flags(void);
 ssize_t ima_parse_add_rule(char *);
 void ima_delete_rules(void);
 int ima_check_policy(void);
-int ima_bpf_check_policy(enum bpf_prog_type, char *attach_point);
+int ima_bpf_check_policy(enum bpf_prog_type, const char *attach_point);
 void *ima_policy_start(struct seq_file *m, loff_t *pos);
 void *ima_policy_next(struct seq_file *m, void *v, loff_t *pos);
 void ima_policy_stop(struct seq_file *m, void *v);
