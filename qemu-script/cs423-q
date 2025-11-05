@@ -1,0 +1,691 @@
+#!/bin/bash
+# based on: https://github.com/fomichev/dotfiles/blob/master/bin/q
+
+# External variables, users can override:
+# {{{
+SSH_PORT=${SSH_PORT:-52222}
+
+NRCPU=${NRCPU:-2}
+MEMORY=${MEMORY:-4096}
+TAP_QUEUES=${TAP_QUEUES:-$NRCPU}
+TAP_MQ=${TAP_MQ:-true}
+
+V4_ADDR=${V4_ADDR:-"10.0.2.15"} # dhcp by default
+V4_PREFIX=${V4_PREFIX:-"24"}    # dhcp by default
+V4_ROUTE=${V4_ROUTE:-"10.0.2.2"}
+V6_ADDR=${V6_ADDR:-"2002:ad6:c2c4::1"}
+V6_PREFIX=${V6_PREFIX:-128}
+
+HOST=${HOST:-q}
+# }}}
+
+# Internal variables:
+# {{{
+DIR_Q="$(dirname $0)"
+DIR_EXPORT=/media
+DIR_ROOT=${DIR_ROOT:-/}
+DIR_KERNEL=${DIR_KERNEL:-}
+IMAGE=${IMAGE:-}
+IMAGE_PART="sda1"
+IMAGE_INIT="/sbin/init.real"
+SCRIPT=${SCRIPT:-}
+ENVIRON_ARG=${ENVIRON_ARG:-}
+
+GDB=${GDB:-false}
+GUEST=${GUEST:-false}
+MODULES=${MODULES:-false}
+TTY=${TTY:-ttyS0}
+SSH=${SSH:-false}
+FWD_PORT=${FWD_PORT:-}
+NET_USER=${NET_USER:-true}
+NET_TAP=${NET_TAP:-false}
+NET_VHOST=${NET_VHOST:-false}
+TCG=${TCG:-false}
+
+HOST_ARCH="$(uname -m)"
+[[ "$HOST_ARCH" = "aarch64" ]] && HOST_ARCH="arm64"
+# }}}
+
+usage() {
+	if [[ -n "$*" ]]; then
+		echo "error: $@"
+		echo
+	fi
+
+	echo "q [options] [path to bzImage]"
+	echo
+	echo "Run it from the kernel directory (make sure .config is there)"
+	echo
+	echo "options:"
+	echo "    i - use specified disk image instead of rootfs"
+	echo "    g - support attaching with gdb"
+	echo "    m - run depmod and modprobe"
+	echo "    c - pass extra kernel cmdline options"
+	echo "    d - start SSH server"
+	echo "    s - run script instead of interactive bash"
+	echo "    2 - disable cgroup v1, run only v2"
+	echo "    f - forward given localhost port (comma-separated list)"
+	echo "    n - networking mode (user,tap,vhost)"
+	echo "    t - force TCG"
+	exit 1
+}
+
+fixup() {
+	local stage="$1"
+
+	if [[ -z "$IMAGE_FIXUP" ]]; then
+		return
+	fi
+
+	say FIXUP $stage
+	${stage}_fixup
+}
+
+# This function is called _BEFORE_ QEMU starts (on host).
+host() {
+	local kernel="$1"
+
+	[[ -e ".config" ]] || usage
+
+	local cmdline
+
+	local fs
+	fs+=" -fsdev local,multidevs=remap,id=vfs1,path=$DIR_ROOT,security_model=none,readonly=on"
+	fs+=" -fsdev local,id=vfs2,path=$(pwd),security_model=none"
+	# fs+=" -fsdev local,id=vfs3,path=$DIR_EXPORT,security_model=none"
+	fs+=" -fsdev local,id=vfs4,path=$DIR_Q,security_model=none,readonly=on"
+	fs+=" -device virtio-9p-pci,fsdev=vfs1,mount_tag=/dev/root"
+	fs+=" -device virtio-9p-pci,fsdev=vfs2,mount_tag=/dev/kernel"
+	# fs+=" -device virtio-9p-pci,fsdev=vfs3,mount_tag=$DIR_EXPORT"
+	fs+=" -device virtio-9p-pci,fsdev=vfs4,mount_tag=/tmp/dir_q"
+
+	local console
+	console+=" -display none"
+	console+=" -serial mon:stdio"
+
+	cmdline+=" earlyprintk=serial,ttyS0,115200"
+	if [[ "${ARCH}" != "arm64" ]]; then
+		cmdline+=" console=ttyS0,115200"
+		cmdline+=" kgdboc=ttyS1,115200"
+	fi
+	cmdline+=" oops=panic retbleed=off"
+
+	local net
+
+	if $NET_USER; then
+		net+=" -netdev user,id=virtual"
+
+		if $SSH; then
+			net+=",hostfwd=tcp:127.0.0.1:$SSH_PORT-:22"
+		fi
+		if [[ ! -z "$FWD_PORT" ]]; then
+			for p in $(echo "$FWD_PORT" | tr ',' ' '); do
+				net+=",hostfwd=tcp::${p}-:$p"
+			done
+		fi
+
+		net+=" -device virtio-net-pci,netdev=virtual"
+	fi
+
+	if $NET_TAP; then
+		local dev="qtap1"
+		if $TAP_MQ; then
+			dev="qtap0"
+		fi
+
+		local vhost=""
+
+		if $NET_VHOST; then
+			vhost=",vhost=on"
+		fi
+
+		net+=" -netdev tap,id=virtual,ifname=$dev,script=no$vhost"
+		if $TAP_MQ; then
+			net+=",queues=${TAP_QUEUES}"
+		fi
+
+		net+=" -device virtio-net-pci,netdev=virtual"
+		if $TAP_MQ; then
+			net+=",mq=on"
+		fi
+	fi
+
+	cmdline+=" $CMDLINE"
+	cmdline+=" rootfstype=9p"
+	cmdline+=" rootflags=version=9p2000.L,trans=virtio,access=any"
+	cmdline+=" ro"
+	cmdline+=" nokaslr"
+
+	local gdb
+	$GDB && gdb+=" -s"
+
+	if [[ ! -z "$IMAGE" ]]; then
+		fs+=" -drive format=raw,file=$IMAGE"
+	fi
+
+	local accel
+	if [[ "$HOST_ARCH" = "${ARCH}" ]]; then
+		if [[ -e /dev/kvm && "$TCG" = "false" ]]; then
+			if [[ "${ARCH}" = "x86_64" ]]; then
+				accel+=" -machine accel=kvm:tcg"
+				accel+=" -enable-kvm"
+			fi
+		fi
+	fi
+
+	fixup host
+
+	local cpu
+	local qemu_flavor=$ARCH
+	case "${ARCH}" in
+	x86_64)
+		if [[ "$HOST_ARCH" = "${ARCH}" ]]; then
+			if [[ -e /dev/kvm && "$TCG" = "false" ]]; then
+				cpu="host"
+			else
+				cpu="max"
+			fi
+		fi
+		;;
+	arm64)
+		if [[ "$HOST_ARCH" = "${ARCH}" ]]; then
+			if [[ -e /dev/kvm && "$TCG" = "false" ]]; then
+				accel+=" -machine virt,accel=kvm"
+            	cpu="host"
+			else
+				accel+=" -machine virt,accel=tcg"
+				cpu="max"
+			fi
+		else
+			accel+=" -machine virt,accel=tcg"
+			cpu="max"
+		fi
+		qemu_flavor=aarch64
+		TTY=ttyAMA0
+		;;
+	esac
+
+	local tpm
+
+	tpm+="  -chardev socket,id=chrtpm,path=/tmp/swtpm-sock"
+  	tpm+=" -tpmdev emulator,id=tpm0,chardev=chrtpm"
+  	tpm+=" -device tpm-tis,tpmdev=tpm0"
+
+	local init
+	# init+="mount -n -t tmpfs tmpfs /tmp"
+	# init+=" && "
+	# init+="mkdir -p /tmp/dir_q"
+	# init+=" && "
+	# init+="mount -n -t 9p -o trans=virtio /tmp/dir_q /tmp/dir_q"
+	# init+=" && "
+	init+="GUEST='true' "
+	init+="IMAGE='$IMAGE' "
+	init+="GDB='$GDB' "
+	init+="TTY='$TTY' "
+	init+="HOSTNAME='$HOSTNAME' "
+	init+="HOME='$HOME' "
+	init+="DIR_ROOT='$DIR_ROOT' "
+	init+="DIR_KERNEL='$(pwd)' "
+	init+="MODULES='$MODULES' "
+	init+="SSH='$SSH' "
+	init+="FWD_PORT='$FWD_PORT' "
+	init+="V4_ADDR='$V4_ADDR' "
+	init+="V4_PREFIX='$V4_PREFIX' "
+	init+="V6_ADDR='$V6_ADDR' "
+	init+="V6_PREFIX='$V6_PREFIX' "
+	init+="NET_USER='$NET_USER' "
+	init+="NET_TAP='$NET_TAP' "
+	init+="NET_VHOST='$NET_VHOST' "
+	init+="SCRIPT='$SCRIPT' "
+	init+="$ENVIRON_ARG "
+	init+=" $(realpath $0) "
+
+	cmdline+=" init=/bin/sh -- -c \"$init\""
+
+	if [[ -z "$cpu" ]]; then
+		echo "unknown cpu for ${ARCH} arch"
+		exit 1
+	fi
+
+	qemu-system-${qemu_flavor} \
+		-no-reboot \
+		$accel \
+		-device i6300esb,id=watchdog0 \
+		-watchdog-action pause \
+		-device virtio-rng-pci \
+		-cpu $cpu \
+		-smp $NRCPU \
+		-m $MEMORY \
+		$fs \
+		$console \
+		$net \
+		$gdb \
+		$tpm \
+		-kernel "$kernel" \
+		-append "$cmdline"
+}
+
+say() {
+	trap 'tput sgr0' 2 #SIGINT
+	# tput setaf 2
+	printf "\33[32m"
+	echo ">" "$@"
+	# tput sgr0
+	printf "\33(B\33[m"
+}
+
+mask-dir() {
+	local upper_dir="/mnt/base-root/tmp/rootdir-overlay/upper/$1"
+
+	mkdir -p "$upper_dir"
+	setfattr -n trusted.overlay.opaque -v y "$upper_dir"
+	mount -o remount /
+}
+
+append_to_hosts() {
+	local addr="$1"
+
+	local prefix=$(echo "$HOSTNAME" | cut -d. -f1)
+	local suffix=$(echo "$HOSTNAME" | cut -d. -f2-)
+
+	if [[ ! -z "$suffix" ]]; then
+		suffix=".${suffix}"
+	fi
+
+	if ! echo "$addr" | grep -q ':'; then
+		prefix="${prefix}-v4"
+	fi
+
+	echo "$addr ${prefix}${suffix} ${prefix}" >>/etc/hosts
+}
+
+# This function is called _AFTER_ QEMU starts (on guest).
+guest() {
+	export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+	say pivot root
+
+	local overlay="/tmp/rootdir-overlay"
+
+	mount -n -t proc -o nosuid,noexec,nodev proc /proc/
+
+	mount -n -t tmpfs tmpfs /tmp
+	mkdir -p $overlay/{lower,upper,work,mnt}
+	mount --bind / $overlay/lower
+	mount -t overlay overlay -o lowerdir=$overlay/lower,upperdir=$overlay/upper,workdir=$overlay/work $overlay/mnt
+	pivot_root $overlay/mnt{,/tmp}
+	cd /
+	mount -n -t proc -o nosuid,noexec,nodev proc /proc/
+
+	mount -n -t tmpfs tmpfs /mnt
+	mkdir /mnt/base-root
+	mount --move /tmp /mnt/base-root
+
+	say early setup
+
+	mount -n -t sysfs -o nosuid,noexec,nodev sys /sys/
+
+	mount -n -t tmpfs tmpfs /tmp
+	mount -n -t tmpfs tmpfs /var/log
+	mount -n -t tmpfs tmpfs /run
+
+	if [[ -d /export ]]; then
+		mount -n -t tmpfs tmpfs /export
+		mkdir -p $DIR_EXPORT
+		mount -n -t 9p -o trans=virtio $DIR_EXPORT $DIR_EXPORT
+	else
+		say "$/expor mount point doesn't exist, not mounting $DIR_EXPORT"
+	fi
+
+	>/etc/fstab
+
+	mount -n -t configfs configfs /sys/kernel/config
+	mount -n -t debugfs debugfs /sys/kernel/debug
+	if [[ -d /sys/kernel/security ]]; then
+		mount -n -t securityfs security /sys/kernel/security
+	fi
+	mount -n -t devtmpfs -o mode=0755,nosuid,noexec devtmpfs /dev
+
+	mkdir -p -m 0755 /dev/shm /dev/pts /dev/cgroup
+	mkdir -p -m 0755 /dev/cgroup/{cpu,cpuset,net} 2>/dev/null
+	mount -n -t devpts -o gid=tty,mode=620,noexec,nosuid devpts /dev/pts
+	mount -n -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm
+
+	if [[ -d "$DIR_KERNEL" ]]; then
+		local kver="$(uname -r)"
+		local mods="$(find /sys/devices -type f -name modalias -print0 | xargs -0 cat | sort | uniq)"
+		local mods_nr=$(echo "$mods" | wc -w)
+
+		say modules /lib/modules/$kver $mods_nr modules
+		mount -n -t 9p -o trans=virtio /dev/kernel "$DIR_KERNEL"
+		mount -n -t tmpfs tmpfs /lib/modules
+		mkdir "/lib/modules/$kver"
+		ln -s "$DIR_KERNEL" "/lib/modules/$kver/source"
+		ln -s "$DIR_KERNEL" "/lib/modules/$kver/build"
+		ln -s "$DIR_KERNEL" "/lib/modules/$kver/kernel"
+
+		cp "$DIR_KERNEL/modules.builtin" "/lib/modules/$kver/modules.builtin"
+		cp "$DIR_KERNEL/modules.order" "/lib/modules/$kver/modules.order"
+
+		# make sure config points to the right place
+		mount -n -t tmpfs tmpfs /boot
+		ln -s "$DIR_KERNEL/.config" /boot/config-$kver
+
+		if $MODULES; then
+			if [[ ! -e "$DIR_KERNEL/modules.dep.bin" ]]; then
+				say modules.dep.bin not found, running depmod, may take awhile
+				depmod -a 2>/dev/null
+			fi
+			modprobe -q -a -- $mods
+		fi
+	else
+		say "$DIR_KERNEL mount point doesn't exist, not mounting"
+	fi
+
+	say networking as $HOSTNAME
+
+	if [[ -n "$(command -v hostname)" ]]; then
+		hostname "$HOSTNAME"
+		echo "$HOSTNAME" >/etc/hostname
+	else
+		say "hostname is not found, don't set hostname"
+	fi
+
+	ip link set dev lo up
+
+	if $NET_USER; then
+		if [[ -n "$(command -v busybox)" ]]; then
+			if [[ -e "/etc/udhcpc/default.script" ]]; then
+				mask-dir /etc/resolvconf/run
+				mkdir -p /run/resolvconf
+				echo "nameserver 8.8.8.8" >/run/resolvconf/resolv.conf
+
+				local dev=$(ls -d /sys/bus/virtio/drivers/virtio_net/virtio* | sort -g | head -n1)
+				local iface=$(ls $dev/net)
+				say dhcp on iface $iface
+				ip link set dev $iface up
+				dhcpcd $iface
+				busybox udhcpc -i $iface -p /run/udhcpc \
+					-s /etc/udhcpc/default.script -q -t 1 -n -f
+
+				append_to_hosts "$v4_addr"
+			else
+				say "busybox is found, but no /etc/udhcpc/default.script, use assigned ip address"
+				if [[ ! -z "$V4_ADDR" ]]; then
+					mask-dir /etc/resolvconf/run
+					mkdir -p /run/resolvconf
+					echo "nameserver 8.8.8.8" >/run/resolvconf/resolv.conf
+
+					local dev=$(ls -d /sys/bus/virtio/drivers/virtio_net/virtio* | sort -g | head -n1)
+					local iface=$(ls $dev/net)
+					ip link set dev $iface up
+					ip -4 addr add "${V4_ADDR}/${V4_PREFIX}" dev $iface
+					ip -4 route add default via $V4_ROUTE
+					append_to_hosts "$V4_ADDR"
+				fi
+			fi
+		else
+			say "busybox is not found, skipping udhcpc"
+		fi
+	fi
+
+	if $NET_TAP; then
+		ip link set dev eth0 up
+	fi
+
+	if [[ ! -z "$V6_ADDR" ]]; then
+		ip -6 addr add "${V6_ADDR}/${V6_PREFIX}" dev eth0
+		append_to_hosts "$V6_ADDR"
+	fi
+
+	if [[ ! -z "$V4_ADDR" ]]; then
+		ip -4 addr add "${V4_ADDR}/${V4_PREFIX}" dev eth0
+		append_to_hosts "$V4_ADDR"
+	fi
+
+	if [[ ! -z "$IMAGE" ]]; then
+		say fsck
+		fsck -T -y -v -r "/dev/$IMAGE_PART"
+
+		say mount disk
+		mkdir /mnt/root
+		mount -n "/dev/$IMAGE_PART" /mnt/root
+
+		fixup guest_pre_pivot
+
+		say pivot root
+		pivot_root /mnt/root{,/tmp}
+		cd /
+
+		umount /tmp/{tmp,var/log,run}
+
+		mkdir -p /root/9p-overlay
+		mount --move /tmp /root/9p-overlay
+		mount -n -t tmpfs tmpfs /root/9p-overlay
+
+		fixup guest_post_pivot
+
+		say exec init
+		mount -n -o remount,ro /
+		exec "$IMAGE_INIT"
+	fi
+
+	say setup cgroups
+	mount -t cgroup -o cpu,cpuacct none /dev/cgroup/cpu
+	mount -t cgroup -o cpuset none /dev/cgroup/cpuset
+	mount -t cgroup -o net_cls none /dev/cgroup/net &>/dev/null
+	sysctl -q kernel.allow_bpf_attach_netcg=0 &>/dev/null
+	mount -t cgroup2 none /sys/fs/cgroup
+
+	say setup bpf
+	sysctl -q net.core.bpf_jit_enable=1
+	sysctl -q net.core.bpf_jit_kallsyms=1
+	sysctl -q net.core.bpf_jit_harden=0
+	mount -t bpf bpffs /sys/fs/bpf
+	ulimit -l unlimited &>/dev/null # EINVAL when loading more than 3 bpf programs
+	ulimit -n 819200 &>/dev/null
+	ulimit -a &>/dev/null
+
+	if $SSH; then
+		say setup sshd
+		say ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@localhost -p $SSH_PORT
+
+		mask-dir /etc/ssh
+		mask-dir /etc/pam.d
+		mkdir -p /var/run/sshd
+		cat <<'EOF' >/etc/pam.d/sshd
+account sufficient pam_permit.so
+auth sufficient pam_permit.so
+password sufficient pam_permit.so
+session sufficient pam_permit.so
+EOF
+
+		echo "root:x:0:0:root:/:/bin/bash" >/etc/passwd
+		echo "sshd:x:123:65534::/var/run/sshd:/usr/sbin/nologin" >>/etc/passwd
+
+		echo "root:*:17785:0:99999:7:::" >/etc/shadow
+
+		echo "" >/etc/group
+
+		cat $HOME/.ssh/id_rsa.pub >>/etc/ssh/authorized_keys
+
+		ssh-keygen -A
+
+		$(which sshd) \
+			-p 22 \
+			-o UsePAM=yes \
+			-o PermitRootLogin=yes \
+			-o AuthorizedKeysFile=/etc/ssh/authorized_keys \
+			-f /dev/null \
+			-E /var/log/sshd
+	fi
+
+	if $GDB; then
+		local kconfig=$(zcat /proc/config.gz | grep CONFIG_GDB_SCRIPT)
+		if [[ ! "$kconfig" = "CONFIG_GDB_SCRIPTS=y" ]]; then
+			say requested GDB, but missing CONFIG_GDB_SCRIPTS=y
+		fi
+	fi
+
+	say root environment
+	touch /etc/{profile,bash.bashrc}
+	>/etc/profile
+	>/etc/bash.bashrc
+
+	mkdir -pm 0755 /root
+	touch /root/.bashrc &>/dev/null
+	touch /root/.bash_profile &>/dev/null
+
+	local rcfile=/tmp/.bashrc
+	export PATH=$HOME/local/bin:$PATH
+	if [[ -d "$DIR_KERNEL" ]]; then
+		export PATH="$DIR_KERNEL/tools/bpf/bpftool:$PATH"
+		export PATH="$DIR_KERNEL/tools/perf:$PATH"
+	fi
+	export NO_BASE16=true # hack for my bashrc to disable colors
+
+	cat <<EOF >$rcfile
+export DIR_KERNEL="$DIR_KERNEL"
+
+export PATH=\$HOME/local/bin:\$PATH
+export PATH=\$DIR_KERNEL/tools/bpf/bpftool:\$PATH
+export PATH=\$DIR_KERNEL/tools/perf:\$PATH
+
+mask-dir () {
+	local upper_dir="/mnt/base-root/tmp/rootdir-overlay/upper/\$1"
+
+	mkdir -p "\$upper_dir"
+	setfattr -n trusted.overlay.opaque -v y "\$upper_dir"
+	mount -o remount /
+}
+
+if [[ -e "\$HOME/.bashrc" ]]; then
+	source \$HOME/.bashrc
+fi
+if [[ -e "\$DIR_KERNEL" ]]; then
+	source "\$DIR_KERNEL/tools/bpf/bpftool/bash-completion/bpftool"
+fi
+if [[ -n "\$(command -v resize)" ]]; then
+	resize &>/dev/null
+fi
+EOF
+
+	if [[ -d "$DIR_KERNEL" ]]; then
+		source "$DIR_KERNEL/tools/bpf/bpftool/bash-completion/bpftool"
+		cd "$DIR_KERNEL"
+	fi
+
+	if [[ -n "$SCRIPT" ]]; then
+		say non-interactive bash script
+		setsid bash --rcfile $rcfile -c "$SCRIPT"
+		if [[ ! $? -eq 0 ]]; then
+			say script failed, starting interactive console
+			setsid bash --rcfile $rcfile 0<>"/dev/$TTY" 1>&0 2>&0
+		fi
+	else
+		say interactive bash $rcfile
+		setsid bash --rcfile $rcfile 0<>"/dev/$TTY" 1>&0 2>&0
+	fi
+
+	echo
+	say poweroff
+	echo o >/proc/sysrq-trigger
+	sleep 30
+}
+
+while getopts "2i:dhgms:c:f:n:t" opt; do
+	case $opt in
+	h) usage ;;
+	2) CMDLINE+=" cgroup_no_v1=all" ;;
+	i) IMAGE="$OPTARG" ;;
+	g) GDB=true ;;
+	m) MODULES=true ;;
+	c) CMDLINE="$OPTARG" ;;
+	d) SSH=true ;;
+	s) SCRIPT="$OPTARG" ;;
+	f) FWD_PORT="$OPTARG" ;;
+	t) TCG=true ;;
+	n)
+		case "$OPTARG" in
+		user) ;;
+		tap)
+			NET_USER=false
+			NET_TAP=true
+			;;
+		vhost)
+			NET_USER=false
+			NET_TAP=true
+			NET_VHOST=true
+			;;
+		*)
+			echo "Invalid net '$OPTARG'"
+			exit 1
+			;;
+		esac
+		;;
+	esac
+done
+shift $((OPTIND - 1))
+
+if [[ ! -z "$IMAGE" && -e "${IMAGE/.img/.fixup}" ]]; then
+	IMAGE_FIXUP="${IMAGE/.img/.fixup}"
+fi
+
+if [[ ! -z "$IMAGE_FIXUP" ]]; then
+	say Using fixup script ${IMAGE_FIXUP}!
+	. "$IMAGE_FIXUP"
+fi
+
+if $GUEST; then
+	guest
+else
+	kernel="$1"
+	shift
+
+	export HOSTNAME="$HOST"
+
+	if $NET_TAP; then
+		if ! ip link show dev qtap0 &>/dev/null; then
+			echo "Couldn't find qtap0 tap device, do:"
+			echo "$ sudo ip tuntap add dev qtap0 mode tap multi_queue"
+			echo "$ sudo ip addr add 10.10.10.1/24 dev qtap0"
+			echo "$ sudo ip link set dev qtap0 up"
+			echo "$ sudo ip tuntap add dev qtap1 mode tap"
+			echo "$ sudo ip addr add 10.10.11.1/24 dev qtap1"
+			echo "$ sudo ip link set dev qtap1 up"
+			exit 1
+		fi
+
+		if $TAP_MQ; then
+			V4_ADDR=10.10.10.2
+			V4_PREFIX=24
+		else
+			V4_ADDR=10.10.11.2
+			V4_PREFIX=24
+		fi
+	fi
+
+	if [[ -z "$kernel" ]]; then
+		if [[ -e "arch/x86/boot/bzImage" ]]; then
+			kernel="arch/x86/boot/bzImage"
+		elif [[ -e "arch/arm64/boot/Image" ]]; then
+			kernel="arch/arm64/boot/Image"
+		fi
+	fi
+
+	if [[ -z "$ARCH" ]]; then
+		if [[ ! -n "$(command -v file)" ]]; then
+			echo "Couldn't find `file`"
+			exit 1
+		fi
+		if file $kernel | grep -q x86; then
+			ARCH=x86_64
+		elif file $kernel | grep -q ARM64; then
+			ARCH=arm64
+		fi
+	fi
+
+	[ -n "$ARCH" ] || usage "unknown arch"
+
+	host "$kernel"
+fi
