@@ -1092,8 +1092,9 @@ enum policy_opt {
 	Opt_digest_type,
 	Opt_appraise_type, Opt_appraise_flag, Opt_appraise_algos,
 	Opt_permit_directio, Opt_pcr, Opt_template, Opt_keyrings,
-	Opt_label, Opt_err, 
+	Opt_label, 
 	Opt_ebpf_hooks, Opt_ebpf_prog_type, Opt_ebpf_attach_type,
+	Opt_err, 
 };
 
 static const match_table_t policy_tokens = {
@@ -1142,10 +1143,10 @@ static const match_table_t policy_tokens = {
 	{Opt_template, "template=%s"},
 	{Opt_keyrings, "keyrings=%s"},
 	{Opt_label, "label=%s"},
-	{Opt_err, NULL},
 	{Opt_ebpf_hooks, "ebpf_hooks=%s"},
 	{Opt_ebpf_prog_type, "ebpf_prog_type=%s"},
 	{Opt_ebpf_attach_type, "ebpf_attach_type=%s"},
+	{Opt_err, NULL},
 };
 
 static int ima_lsm_rule_init(struct ima_rule_entry *entry,
@@ -1613,7 +1614,7 @@ static bool ima_validate_rule(struct ima_rule_entry *entry)
 		if (entry->action & ~(MEASURE | DONT_MEASURE | APPRAISE | DONT_APPRAISE | AUDIT | HASH | DONT_HASH))
 			return false;
 
-		if (entry->flags & ~(IMA_FUNC | IMA_UID | IMA_GID | IMA_PCR | IMA_EUID | IMA_EGID | IMA_VALIDATE_ALGOS |IMA_EBPF_HOOKS | IMA_EBPF_PROG_TYPES |
+		if (entry->flags & ~(IMA_FUNC | IMA_UID | IMA_GID | IMA_PCR | IMA_EUID | IMA_EGID | IMA_VALIDATE_ALGOS | IMA_EBPF_HOOKS | IMA_EBPF_PROG_TYPES |
 				     IMA_EBPF_ATTACH_TYPES))
 			return false;
 
@@ -2560,6 +2561,7 @@ int ima_policy_show(struct seq_file *m, void *v)
 	if (entry->flags & IMA_EBPF_PROG_TYPES) {
 		seq_puts(m, "ebpf_prog_type= ");
 		seq_puts(m, "");
+		
 	}
 
     if (entry->flags & IMA_EBPF_ATTACH_TYPES) {
