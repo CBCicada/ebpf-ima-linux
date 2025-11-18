@@ -293,12 +293,11 @@ struct ima_template_desc *ima_template_desc_buf(void)
 }
 struct ima_template_desc *ima_template_desc_bpf(void)
 {
-        if (!ima_bpf_template) {
-                ima_init_template_list();
-                ima_bpf_template =
-                    lookup_template_desc("ima-bpf");
-        }
-        return ima_bpf_template;
+	if (!ima_bpf_template) {
+		ima_init_template_list();
+		ima_bpf_template = lookup_template_desc("ima-bpf");
+	}
+	return ima_bpf_template;
 }
 
 int __init ima_init_template(void)

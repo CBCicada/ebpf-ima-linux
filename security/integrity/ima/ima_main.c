@@ -29,6 +29,7 @@
 #include <linux/evm.h>
 #include <linux/crash_dump.h>
 #include <linux/bpf.h>
+#include <linux/filter.h>
 
 #include "ima.h"
 
@@ -728,68 +729,71 @@ EXPORT_SYMBOL_GPL(ima_file_hash);
 static int bpf_process_measurement(struct bpf_prog *prog, char *id)
 {
 
+	int ret = 0;
 	static const char op[] = "ebpf-measure";
 	const char *audit_cause = "ENOMEM";
 	struct ima_template_entry *entry = NULL;
-	struct ima_template_desc *desc;
+	struct ima_template_desc *template;
 	struct ima_iint_cache iint = {};
 	struct ima_event_data event_data = { .iint = &iint,
-			                     .filename = id,
+			                     .filename = id, // BPF program attr->prog_name
 					     .buf = prog->insnsi,
-					     .buf_len =  sizeof(struct bpf_insn *),
+					     .buf_len = bpf_prog_insn_size(prog),
 					   };
 
 	struct ima_max_digest_data hash;
 	struct ima_digest_data *hash_hdr = container_of(&hash.hdr,
 						struct ima_digest_data, hdr);
-	int result = -ENOMEM;
 	int violation = 0;
-	int length; 
+	//int length; 
 	//char digest_hash[IMA_MAX_DIGEST_SIZE];
 	int digest_hash_len = hash_digest_size[ima_hash_algo];
 	struct bpf_insn *insn = prog->insnsi;
 
-
-	memset(&hash, 0, sizeof(hash));
+	template = ima_template_desc_bpf();
+	if (!template) {
+		ret = -EINVAL;
+		audit_cause = "ima_template_desc_bpf";
+		goto err_out;
+	}
 	
 	iint.ima_hash = hash_hdr;
 	iint.ima_hash->algo = ima_hash_algo;
 	iint.ima_hash->length = digest_hash_len;
 
-	result = ima_calc_buffer_hash(insn, sizeof(struct bpf_insn *), iint.ima_hash);
-	if (result < 0) {
+	ret = ima_calc_buffer_hash(insn, bpf_prog_insn_size(prog), iint.ima_hash);
+	if (ret < 0) {
 		audit_cause = "hashing_error";
 		goto err_out;
 	}
-	
-	length = sizeof(hash.hdr) + hash.hdr.length;
-	memcpy(iint.ima_hash, &hash, length);
-	
-	desc = ima_template_desc_bpf();
-	if (!desc) {
-		result = -EINVAL;
-		audit_cause = "ima_template_desc_buf";
-		goto err_out;
-	}
 
-	result = ima_alloc_init_template(&event_data, &entry, desc);
-	if (result < 0) {
+	// TODO (avery): For large programs, maybe consider rehashing?
+	
+	ret = ima_alloc_init_template(&event_data, &entry, template);
+	if (ret < 0) {
 		audit_cause = "alloc_entry";
 		goto err_out;
 	}
-	
-	result = ima_store_template(entry, violation, NULL,
+
+	// TODO (avery): Maybe let user choose PCR?
+
+	ret = ima_store_template(entry, violation, NULL,
 				    event_data.buf, CONFIG_IMA_MEASURE_PCR_IDX);
-	if (result < 0) {
+	if (ret < 0) {
 		ima_free_template_entry(entry);
 		audit_cause = "store_entry";
-		goto err_out;
 	}
-	return 0;
+
+	//memset(&hash, 0, sizeof(hash));
+
+	//length = sizeof(hash.hdr) + hash.hdr.length;
+	//memcpy(iint.ima_hash, &hash, length);
+
 err_out:
-	integrity_audit_message(AUDIT_INTEGRITY_PCR, NULL, id, op,
-			    audit_cause, result, 0, result);
-	return result;
+	if(ret < 0)
+		integrity_audit_message(AUDIT_INTEGRITY_PCR, NULL, id, op,
+			    audit_cause, ret, 0, ret);
+	return ret;
 }
 /*
  * ima_bpf_check - measure and appraise eBPF programs based on policy 
@@ -805,11 +809,18 @@ err_out:
  {
 
 	int action;
+	struct lsm_prop prop; // TODO (avery): Use LSM properties with eBPF? Do they exist?
+	int pcr;
+	struct ima_template_desc *template_desc;
+	unsigned int allowed_algos = 0;
 	
 	/* Check policy */
-	action = ima_bpf_check_policy(prog->type, prog->aux->attach_func_name);
-	if (action < 0)
-		return action;
+	// action = ima_bpf_check_policy(prog->type, prog->aux->attach_func_name);
+	// if (action < 0)
+	// 	return action;
+	action = ima_get_action(&nop_mnt_idmap, NULL, current_cred(), &prop,
+				MAY_READ, BPF_CHECK,
+				&pcr, NULL, NULL, &allowed_algos);
 
 	/* Process measurement */
 	if (action & IMA_MEASURE) 

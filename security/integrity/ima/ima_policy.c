@@ -38,6 +38,7 @@
 #define IMA_GID		0x2000
 #define IMA_EGID	0x4000
 #define IMA_FGROUP	0x8000
+// TODO (avery) flags?
 #define IMA_EBPF_HOOKS 	0x1001
 #define IMA_EBPF_PROG_TYPES  0x1002
 #define IMA_EBPF_ATTACH_TYPES  0x1004
@@ -394,6 +395,12 @@ static void ima_lsm_free_rule(struct ima_rule_entry *entry)
 	}
 }
 
+static void ima_ebpf_free_rule(struct ima_rule_entry *entry)
+{
+	if(entry->flags & IMA_EBPF_HOOKS)
+		kfree(entry->ebpf.hook);
+}
+
 static void ima_free_rule(struct ima_rule_entry *entry)
 {
 	if (!entry)
@@ -407,6 +414,7 @@ static void ima_free_rule(struct ima_rule_entry *entry)
 	kfree(entry->fsname);
 	ima_free_rule_opt_list(entry->keyrings);
 	ima_lsm_free_rule(entry);
+	ima_ebpf_free_rule(entry);
 	kfree(entry);
 }
 
@@ -1085,8 +1093,8 @@ enum policy_opt {
 	Opt_digest_type,
 	Opt_appraise_type, Opt_appraise_flag, Opt_appraise_algos,
 	Opt_permit_directio, Opt_pcr, Opt_template, Opt_keyrings,
-	Opt_label, Opt_err, Opt_ebpf_hooks, Opt_ebpf_attach_type, 
-	Opt_ebpf_prog_type,
+	Opt_label, Opt_err, 
+	Opt_ebpf_hooks, Opt_ebpf_prog_type, Opt_ebpf_attach_type,
 };
 
 static const match_table_t policy_tokens = {
@@ -1138,7 +1146,7 @@ static const match_table_t policy_tokens = {
 	{Opt_err, NULL},
 	{Opt_ebpf_hooks, "ebpf_hooks=%s"},
 	{Opt_ebpf_prog_type, "ebpf_prog_type=%s"},
-	{Opt_ebpf_prog_type, "ebpf_attach_type=%s"},
+	{Opt_ebpf_attach_type, "ebpf_attach_type=%s"},
 };
 
 static int ima_lsm_rule_init(struct ima_rule_entry *entry,
@@ -2140,12 +2148,12 @@ static int ima_parse_rule(char *rule, struct ima_rule_entry *entry)
 		case Opt_ebpf_prog_type:	
 			ima_log_string(ab, "ebpf_prog_type", args[0].from);
                         result = ima_ebpf_rule_init(entry, args, EBPF_PROG_TYPE);
-                        break;
+            break;
 
 		case Opt_ebpf_attach_type:
 			ima_log_string(ab, "ebpf_attach_type", args[0].from);
                         result = ima_ebpf_rule_init(entry, args, EBPF_ATTACH_TYPE);
-                        break;
+            break;
 		
 		case Opt_err:
 			ima_log_string(ab, "UNKNOWN", p);
@@ -2543,16 +2551,16 @@ int ima_policy_show(struct seq_file *m, void *v)
 		seq_puts(m, "");
 	}
 
-        if (entry->flags & IMA_EBPF_ATTACH_TYPES) {
-                seq_puts(m, "ebpf_attach_type= ");
-                seq_puts(m, "");        
+    if (entry->flags & IMA_EBPF_ATTACH_TYPES) {
+		seq_puts(m, "ebpf_attach_type= ");
+		seq_puts(m, "");        
 	}
 
 	if (entry->flags & IMA_EBPF_HOOKS) {
-                seq_puts(m, "ebpf_hooks= ");
-                seq_printf(m, entry->ebpf.hook);
-                seq_puts(m, "");
-        }
+        seq_puts(m, "ebpf_hooks= ");
+		seq_printf(m, entry->ebpf.hook);
+		seq_puts(m, "");
+    }
 	
 	rcu_read_unlock();
 	seq_puts(m, "\n");
