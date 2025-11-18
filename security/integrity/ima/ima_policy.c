@@ -22,26 +22,25 @@
 #include "ima.h"
 
 /* flags definitions */
-#define IMA_FUNC	0x0001
-#define IMA_MASK	0x0002
-#define IMA_FSMAGIC	0x0004
-#define IMA_UID		0x0008
-#define IMA_FOWNER	0x0010
-#define IMA_FSUUID	0x0020
-#define IMA_INMASK	0x0040
-#define IMA_EUID	0x0080
-#define IMA_PCR		0x0100
-#define IMA_FSNAME	0x0200
-#define IMA_KEYRINGS	0x0400
-#define IMA_LABEL	0x0800
-#define IMA_VALIDATE_ALGOS	0x1000
-#define IMA_GID		0x2000
-#define IMA_EGID	0x4000
-#define IMA_FGROUP	0x8000
-// TODO (avery) flags?
-#define IMA_EBPF_HOOKS 	0x1001
-#define IMA_EBPF_PROG_TYPES  0x1002
-#define IMA_EBPF_ATTACH_TYPES  0x1004
+#define IMA_FUNC	0x00000001
+#define IMA_MASK	0x00000002
+#define IMA_FSMAGIC	0x00000004
+#define IMA_UID		0x00000008
+#define IMA_FOWNER	0x00000010
+#define IMA_FSUUID	0x00000020
+#define IMA_INMASK	0x00000040
+#define IMA_EUID	0x00000080
+#define IMA_PCR		0x00000100
+#define IMA_FSNAME	0x00000200
+#define IMA_KEYRINGS	0x00000400
+#define IMA_LABEL	0x00000800
+#define IMA_VALIDATE_ALGOS	0x00001000
+#define IMA_GID		0x00002000
+#define IMA_EGID	0x00004000
+#define IMA_FGROUP	0x00008000
+#define IMA_EBPF_HOOKS 	0x00010000
+#define IMA_EBPF_PROG_TYPES  0x00020000
+#define IMA_EBPF_ATTACH_TYPES  0x00040000
 
 #define UNKNOWN		0
 #define MEASURE		0x0001	/* same as IMA_MEASURE */
@@ -1404,11 +1403,13 @@ static int ima_ebpf_rule_init(struct ima_rule_entry *entry, substring_t *args, i
 {
 	if (ebpf_rule == EBPF_HOOK) {
 		entry->ebpf.hook = match_strdup(args);
+		entry->flags |= IMA_EBPF_HOOKS;
 	} else if (ebpf_rule == EBPF_PROG_TYPE) {
-		entry->ebpf.type =  ima_parse_ebpf_prog_types(args); 
+		entry->ebpf.type =  ima_parse_ebpf_prog_types(args);
+		entry->flags |= IMA_EBPF_PROG_TYPES;
 	} else if (ebpf_rule == EBPF_ATTACH_TYPE) {
 		entry->ebpf.attach_type =  ima_parse_ebpf_attach_type(args);
-	
+		entry->flags |= IMA_EBPF_ATTACH_TYPES;
 	}
 	return 0;
 
@@ -1604,6 +1605,16 @@ static bool ima_validate_rule(struct ima_rule_entry *entry)
 		 * much of a performance impact
 		 */
 		if (entry->flags & ~(IMA_FUNC | IMA_VALIDATE_ALGOS))
+			return false;
+
+		break;
+	case BPF_CHECK:
+		// TODO (avery): add validation logic
+		if (entry->action & ~(MEASURE | DONT_MEASURE | APPRAISE | DONT_APPRAISE | AUDIT | HASH | DONT_HASH))
+			return false;
+
+		if (entry->flags & ~(IMA_FUNC | IMA_UID | IMA_GID | IMA_PCR | IMA_EUID | IMA_EGID | IMA_VALIDATE_ALGOS |IMA_EBPF_HOOKS | IMA_EBPF_PROG_TYPES |
+				     IMA_EBPF_ATTACH_TYPES))
 			return false;
 
 		break;

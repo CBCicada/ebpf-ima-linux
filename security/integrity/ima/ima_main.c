@@ -808,25 +808,26 @@ err_out:
  int ima_bpf_prog_load(struct bpf_prog *prog, char *id, union bpf_attr *attr, bpfptr_t uattr, __u32 uattr_size)
  {
 
-	int action;
-	struct lsm_prop prop; // TODO (avery): Use LSM properties with eBPF? Do they exist?
-	int pcr;
-	struct ima_template_desc *template_desc;
-	unsigned int allowed_algos = 0;
+	// int action;
+	// struct lsm_prop prop; // TODO (avery): Use LSM properties with eBPF? Do they exist?
+	// int pcr;
+	// struct ima_template_desc *template_desc;
+	// unsigned int allowed_algos = 0;
 	
+	// TODO (avery) : Rewrite this part to get policy before measurement
 	/* Check policy */
 	// action = ima_bpf_check_policy(prog->type, prog->aux->attach_func_name);
 	// if (action < 0)
 	// 	return action;
-	action = ima_get_action(&nop_mnt_idmap, NULL, current_cred(), &prop,
-				MAY_READ, BPF_CHECK,
-				&pcr, NULL, NULL, &allowed_algos);
+	// action = ima_get_action(&nop_mnt_idmap, NULL, current_cred(), &prop,
+	// 			MAY_READ | MAY_WRITE | MAY_EXEC | MAY_APPEND, BPF_CHECK,
+	// 			&pcr, &template_desc, NULL, &allowed_algos);
 
 	/* Process measurement */
-	if (action & IMA_MEASURE) 
+	// if (action & IMA_MEASURE) 
 		return bpf_process_measurement(prog, id);
 
-	return 0;
+	// return 0;
  }
 EXPORT_SYMBOL(ima_bpf_prog_load);
 
