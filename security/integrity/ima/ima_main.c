@@ -263,7 +263,7 @@ static int process_measurement(struct file *file, const struct cred *cred,
 	 */
 	action = ima_get_action(file_mnt_idmap(file), inode, cred, prop,
 				mask, func, &pcr, &template_desc, NULL,
-				&allowed_algos);
+				&allowed_algos, NULL);
 	violation_check = ((func == FILE_CHECK || func == MMAP_CHECK ||
 			    func == MMAP_CHECK_REQPROT) &&
 			   (ima_policy_flag & IMA_MEASURE) &&
@@ -536,11 +536,11 @@ static int ima_file_mprotect(struct vm_area_struct *vma, unsigned long reqprot,
 	inode = file_inode(vma->vm_file);
 	action = ima_get_action(file_mnt_idmap(vma->vm_file), inode,
 				current_cred(), &prop, MAY_EXEC, MMAP_CHECK,
-				&pcr, &template, NULL, NULL);
+				&pcr, &template, NULL, NULL, NULL);
 	action |= ima_get_action(file_mnt_idmap(vma->vm_file), inode,
 				 current_cred(), &prop, MAY_EXEC,
 				 MMAP_CHECK_REQPROT, &pcr, &template, NULL,
-				 NULL);
+				 NULL, NULL);
 
 	/* Is the mmap'ed file in policy? */
 	if (!(action & (IMA_MEASURE | IMA_APPRAISE_SUBMASK)))
@@ -725,7 +725,7 @@ EXPORT_SYMBOL_GPL(ima_file_hash);
  * bpf_process_measurement - collect/store measurement of BPF 
  * program
  */ 
-static int bpf_process_measurement(struct bpf_prog *prog, char *id)
+static int bpf_process_measurement(struct bpf_prog *prog, char *id, int pcr)
 {
 
 	int ret = 0;
@@ -744,8 +744,6 @@ static int bpf_process_measurement(struct bpf_prog *prog, char *id)
 	struct ima_digest_data *hash_hdr = container_of(&hash.hdr,
 						struct ima_digest_data, hdr);
 	int violation = 0;
-	//int length; 
-	//char digest_hash[IMA_MAX_DIGEST_SIZE];
 	int digest_hash_len = hash_digest_size[ima_hash_algo];
 	struct bpf_insn *insn = prog->insnsi;
 
@@ -774,19 +772,14 @@ static int bpf_process_measurement(struct bpf_prog *prog, char *id)
 		goto err_out;
 	}
 
-	// TODO (avery): Maybe let user choose PCR?
+	// TODO (avery): Pretty sure event_data.buf is not human readable. Should we still log it?
 
 	ret = ima_store_template(entry, violation, NULL,
-				    event_data.buf, CONFIG_IMA_MEASURE_PCR_IDX);
+				    event_data.buf, pcr);
 	if (ret < 0) {
 		ima_free_template_entry(entry);
 		audit_cause = "store_entry";
 	}
-
-	//memset(&hash, 0, sizeof(hash));
-
-	//length = sizeof(hash.hdr) + hash.hdr.length;
-	//memcpy(iint.ima_hash, &hash, length);
 
 err_out:
 	if(ret < 0)
@@ -804,31 +797,27 @@ err_out:
  *
  * Returns 0 on success
  */
- int ima_bpf_prog_load(struct bpf_prog *prog, char *id, union bpf_attr *attr, bpfptr_t uattr, __u32 uattr_size)
+ int ima_bpf_check(struct bpf_prog *prog, char *id, union bpf_attr *attr, bpfptr_t uattr, __u32 uattr_size)
  {
 
-	// int action;
-	// struct lsm_prop prop; // TODO (avery): Use LSM properties with eBPF? Do they exist?
-	// int pcr;
-	// struct ima_template_desc *template_desc;
-	// unsigned int allowed_algos = 0;
+	int action;
+	struct lsm_prop prop; // TODO (avery): Use LSM properties with eBPF? Do they exist?
+	int pcr;
 	
-	// TODO (avery) : Rewrite this part to get policy before measurement
-	/* Check policy */
-	// action = ima_bpf_check_policy(prog->type, prog->aux->attach_func_name);
-	// if (action < 0)
-	// 	return action;
-	// action = ima_get_action(&nop_mnt_idmap, NULL, current_cred(), &prop,
-	// 			MAY_READ | MAY_WRITE | MAY_EXEC | MAY_APPEND, BPF_CHECK,
-	// 			&pcr, &template_desc, NULL, &allowed_algos);
+	action = ima_get_action(&nop_mnt_idmap, NULL, current_cred(), &prop,
+				0, BPF_CHECK,
+				&pcr, NULL, NULL, NULL, prog);
+
+	if (!pcr)
+		pcr = CONFIG_IMA_MEASURE_PCR_IDX;
 
 	/* Process measurement */
-	// if (action & IMA_MEASURE) 
-		return bpf_process_measurement(prog, id);
+	if (action & IMA_MEASURE) 
+		bpf_process_measurement(prog, id, pcr);
 
-	// return 0;
+	return 0;
  }
-EXPORT_SYMBOL(ima_bpf_prog_load);
+EXPORT_SYMBOL(ima_bpf_check);
 
 /**
  * ima_inode_hash - return the stored measurement if the inode has been hashed
@@ -1163,7 +1152,7 @@ int process_buffer_measurement(struct mnt_idmap *idmap,
 		security_current_getlsmprop_subj(&prop);
 		action = ima_get_action(idmap, inode, current_cred(),
 					&prop, 0, func, &pcr, &template,
-					func_data, NULL);
+					func_data, NULL, NULL);
 		if (!(action & IMA_MEASURE) && !digest)
 			return -ENOENT;
 	}

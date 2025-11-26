@@ -3083,8 +3083,9 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 	 * Here eBPF program has been verified and is ready 
 	 * for attached, check if policy allows this
 	 */
+	 // TODO(avery): Is this design pattern right? Should I do ifdef here?
 	#ifdef CONFIG_IMA
-	err = ima_bpf_prog_load(prog, attr->prog_name, attr, uattr, uattr_size);
+	err = ima_bpf_check(prog, attr->prog_name, attr, uattr, uattr_size);
 	if (err < 0)
 		goto free_used_maps;
 	#endif

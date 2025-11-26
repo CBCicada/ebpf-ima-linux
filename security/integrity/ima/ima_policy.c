@@ -38,7 +38,7 @@
 #define IMA_GID		0x00002000
 #define IMA_EGID	0x00004000
 #define IMA_FGROUP	0x00008000
-#define IMA_EBPF_HOOKS 	0x00010000
+#define IMA_EBPF_HOOKS 	0x00010000 /* TODO (avery) What does this do?*/
 #define IMA_EBPF_PROG_TYPES  0x00020000
 #define IMA_EBPF_ATTACH_TYPES  0x00040000
 
@@ -584,7 +584,7 @@ static bool ima_match_rules(struct ima_rule_entry *rule,
 			    struct mnt_idmap *idmap,
 			    struct inode *inode, const struct cred *cred,
 			    struct lsm_prop *prop, enum ima_hooks func, int mask,
-			    const char *func_data)
+			    const char *func_data, const struct bpf_prog *prog)
 {
 	int i;
 	bool result = false;
@@ -649,6 +649,17 @@ static bool ima_match_rules(struct ima_rule_entry *rule,
 	    !rule->fgroup_op(i_gid_into_vfsgid(idmap, inode),
 			     rule->fgroup))
 		return false;
+	// EBPF_HOOK???
+	if (rule->flags & IMA_EBPF_PROG_TYPES){
+		if (!prog) return false;
+		if (rule->ebpf.prog_type != prog->type)
+			return false;
+	}
+	if (rule->flags & IMA_EBPF_ATTACH_TYPES){
+		if (!prog) return false;
+		if (rule->ebpf.attach_type != prog->expected_attach_type)
+			return false;
+	}
 	for (i = 0; i < MAX_LSM_RULES; i++) {
 		int rc = 0;
 		struct lsm_prop inode_prop = { };
@@ -757,7 +768,7 @@ int ima_match_policy(struct mnt_idmap *idmap, struct inode *inode,
 		     const struct cred *cred, struct lsm_prop *prop,
 		     enum ima_hooks func, int mask, int flags, int *pcr,
 		     struct ima_template_desc **template_desc,
-		     const char *func_data, unsigned int *allowed_algos)
+		     const char *func_data, unsigned int *allowed_algos, const struct bpf_prog *prog)
 {
 	struct ima_rule_entry *entry;
 	int action = 0, actmask = flags | (flags << 1);
@@ -774,7 +785,7 @@ int ima_match_policy(struct mnt_idmap *idmap, struct inode *inode,
 			continue;
 
 		if (!ima_match_rules(entry, idmap, inode, cred, prop,
-				     func, mask, func_data))
+				     func, mask, func_data, prog))
 			continue;
 
 		action |= entry->flags & IMA_NONACTION_FLAGS;
