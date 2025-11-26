@@ -28,7 +28,6 @@
 #include <linux/iversion.h>
 #include <linux/evm.h>
 #include <linux/crash_dump.h>
-#include <linux/bpf.h>
 #include <linux/filter.h>
 
 #include "ima.h"

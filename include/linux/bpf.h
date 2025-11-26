@@ -3751,6 +3751,57 @@ struct bpf_key {
 };
 #endif /* CONFIG_KEYS */
 
+#ifdef CONFIG_IMA
+
+#define BPF_PROG_TYPE_STRING_FN(x) "BPF_PROG_TYPE_" #x,
+#define BPF_ATTACH_TYPE_STRING_FN(x) "BPF_" #x,
+
+static const char * const bpf_prog_type_strs[] = {
+    BPF_PROG_TYPE_LIST(BPF_PROG_TYPE_STRING_FN)
+};
+
+static const char * const bpf_attach_type_strs[] = {
+    BPF_ATTACH_TYPE_LIST(BPF_ATTACH_TYPE_STRING_FN)
+};
+
+static inline const char *bpf_prog_type_enum_to_str(enum bpf_prog_type type)
+{
+	if (type < __MAX_BPF_PROG_TYPE)
+		return bpf_prog_type_strs[type];
+	return "BPF_PROG_TYPE_UNKNOWN";
+}
+
+static inline const char *bpf_attach_type_enum_to_str(enum bpf_attach_type type)
+{
+	if (type < __MAX_BPF_ATTACH_TYPE)
+		return bpf_attach_type_strs[type];
+	return "BPF_ATTACH_TYPE_UNKNOWN";
+}
+
+static inline int bpf_prog_type_str_to_enum(const char *str)
+{
+	int i;
+
+	for (i = 0; i < __MAX_BPF_PROG_TYPE; i++) {
+		if (strcmp(str, bpf_prog_type_strs[i]) == 0)
+			return i;
+	}
+	return -EINVAL;
+}
+
+static inline int bpf_attach_type_str_to_enum(const char *str)
+{
+	int i;
+
+	for (i = 0; i < __MAX_BPF_ATTACH_TYPE; i++) {
+		if (strcmp(str, bpf_attach_type_strs[i]) == 0)
+			return i;
+	}
+	return -EINVAL;
+}
+
+#endif /* CONFIG_IMA */
+
 static inline bool type_is_alloc(u32 type)
 {
 	return type & MEM_ALLOC;
