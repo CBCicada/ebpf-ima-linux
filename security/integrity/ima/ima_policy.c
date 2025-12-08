@@ -649,7 +649,11 @@ static bool ima_match_rules(struct ima_rule_entry *rule,
 	    !rule->fgroup_op(i_gid_into_vfsgid(idmap, inode),
 			     rule->fgroup))
 		return false;
-	// EBPF_HOOK???
+	if(rule->flags & IMA_EBPF_HOOKS){
+		if(!prog) return false;
+		if(prog->aux->attach_func_name == NULL) return false;
+		if(strcmp(prog->aux->attach_func_name, rule->ebpf.hook)) return false;
+	}
 	if (rule->flags & IMA_EBPF_PROG_TYPES){
 		if (!prog) return false;
 		if (rule->ebpf.prog_type != prog->type)
