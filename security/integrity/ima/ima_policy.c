@@ -22,25 +22,26 @@
 #include "ima.h"
 
 /* flags definitions */
-#define IMA_FUNC	0x00000001
-#define IMA_MASK	0x00000002
-#define IMA_FSMAGIC	0x00000004
-#define IMA_UID		0x00000008
-#define IMA_FOWNER	0x00000010
-#define IMA_FSUUID	0x00000020
-#define IMA_INMASK	0x00000040
-#define IMA_EUID	0x00000080
-#define IMA_PCR		0x00000100
-#define IMA_FSNAME	0x00000200
-#define IMA_KEYRINGS	0x00000400
-#define IMA_LABEL	0x00000800
-#define IMA_VALIDATE_ALGOS	0x00001000
-#define IMA_GID		0x00002000
-#define IMA_EGID	0x00004000
-#define IMA_FGROUP	0x00008000
-#define IMA_EBPF_HOOKS 	0x00010000 /* TODO (avery) What does this do?*/
-#define IMA_EBPF_PROG_TYPES  0x00020000
-#define IMA_EBPF_ATTACH_TYPES  0x00040000
+#define IMA_FUNC	0x0001
+#define IMA_MASK	0x0002
+#define IMA_FSMAGIC	0x0004
+#define IMA_UID		0x0008
+#define IMA_FOWNER	0x0010
+#define IMA_FSUUID	0x0020
+#define IMA_INMASK	0x0040
+#define IMA_EUID	0x0080
+#define IMA_PCR		0x0100
+#define IMA_FSNAME	0x0200
+#define IMA_KEYRINGS	0x0400
+#define IMA_LABEL	0x0800
+#define IMA_VALIDATE_ALGOS	0x1000
+#define IMA_GID		0x2000
+#define IMA_EGID	0x4000
+#define IMA_FGROUP	0x8000
+#define IMA_FS_SUBTYPE	0x10000
+#define IMA_EBPF_HOOKS 	0x20000
+#define IMA_EBPF_PROG_TYPES  0x40000
+#define IMA_EBPF_ATTACH_TYPES  0x80000
 
 #define UNKNOWN		0
 #define MEASURE		0x0001	/* same as IMA_MEASURE */
@@ -48,6 +49,7 @@
 #define APPRAISE	0x0004	/* same as IMA_APPRAISE */
 #define DONT_APPRAISE	0x0008
 #define AUDIT		0x0040
+#define DONT_AUDIT	0x0080
 #define HASH		0x0100
 #define DONT_HASH	0x0200
 
@@ -127,6 +129,7 @@ struct ima_rule_entry {
 		enum bpf_attach_type attach_type;
 	} ebpf;
 	char *fsname;
+	char *fs_subtype;
 	struct ima_rule_opt_list *keyrings; /* Measure keys added to these keyrings */
 	struct ima_rule_opt_list *label; /* Measure data grouped under this label */
 	struct ima_template_desc *template;
@@ -249,7 +252,8 @@ static struct ima_rule_entry build_appraise_rules[] __ro_after_init = {
 
 static struct ima_rule_entry secure_boot_rules[] __ro_after_init = {
 	{.action = APPRAISE, .func = MODULE_CHECK,
-	 .flags = IMA_FUNC | IMA_DIGSIG_REQUIRED},
+	 .flags = IMA_FUNC | IMA_DIGSIG_REQUIRED | IMA_MODSIG_ALLOWED |
+		  IMA_CHECK_BLACKLIST},
 	{.action = APPRAISE, .func = FIRMWARE_CHECK,
 	 .flags = IMA_FUNC | IMA_DIGSIG_REQUIRED},
 	{.action = APPRAISE, .func = KEXEC_KERNEL_CHECK,
@@ -411,6 +415,7 @@ static void ima_free_rule(struct ima_rule_entry *entry)
 	 * the defined_templates list and cannot be freed here
 	 */
 	kfree(entry->fsname);
+	kfree(entry->fs_subtype);
 	ima_free_rule_opt_list(entry->keyrings);
 	ima_lsm_free_rule(entry);
 	ima_ebpf_free_rule(entry);
@@ -616,6 +621,12 @@ static bool ima_match_rules(struct ima_rule_entry *rule,
 	if ((rule->flags & IMA_FSNAME)
 	    && strcmp(rule->fsname, inode->i_sb->s_type->name))
 		return false;
+	if (rule->flags & IMA_FS_SUBTYPE) {
+		if (!inode->i_sb->s_subtype)
+			return false;
+		if (strcmp(rule->fs_subtype, inode->i_sb->s_subtype))
+			return false;
+	}
 	if ((rule->flags & IMA_FSUUID) &&
 	    !uuid_equal(&rule->fsuuid, &inode->i_sb->s_uuid))
 		return false;
@@ -704,7 +715,7 @@ retry:
 				goto retry;
 			}
 		}
-		if (!rc) {
+		if (rc <= 0) {
 			result = false;
 			goto out;
 		}
@@ -1094,10 +1105,10 @@ void ima_update_policy(void)
 enum policy_opt {
 	Opt_measure, Opt_dont_measure,
 	Opt_appraise, Opt_dont_appraise,
-	Opt_audit, Opt_hash, Opt_dont_hash,
+	Opt_audit, Opt_dont_audit, Opt_hash, Opt_dont_hash,
 	Opt_obj_user, Opt_obj_role, Opt_obj_type,
 	Opt_subj_user, Opt_subj_role, Opt_subj_type,
-	Opt_func, Opt_mask, Opt_fsmagic, Opt_fsname, Opt_fsuuid,
+	Opt_func, Opt_mask, Opt_fsmagic, Opt_fsname, Opt_fs_subtype, Opt_fsuuid,
 	Opt_uid_eq, Opt_euid_eq, Opt_gid_eq, Opt_egid_eq,
 	Opt_fowner_eq, Opt_fgroup_eq,
 	Opt_uid_gt, Opt_euid_gt, Opt_gid_gt, Opt_egid_gt,
@@ -1118,6 +1129,7 @@ static const match_table_t policy_tokens = {
 	{Opt_appraise, "appraise"},
 	{Opt_dont_appraise, "dont_appraise"},
 	{Opt_audit, "audit"},
+	{Opt_dont_audit, "dont_audit"},
 	{Opt_hash, "hash"},
 	{Opt_dont_hash, "dont_hash"},
 	{Opt_obj_user, "obj_user=%s"},
@@ -1130,6 +1142,7 @@ static const match_table_t policy_tokens = {
 	{Opt_mask, "mask=%s"},
 	{Opt_fsmagic, "fsmagic=%s"},
 	{Opt_fsname, "fsname=%s"},
+	{Opt_fs_subtype, "fs_subtype=%s"},
 	{Opt_fsuuid, "fsuuid=%s"},
 	{Opt_uid_eq, "uid=%s"},
 	{Opt_euid_eq, "euid=%s"},
@@ -1348,7 +1361,8 @@ static bool ima_validate_rule(struct ima_rule_entry *entry)
 		if (entry->flags & ~(IMA_FUNC | IMA_MASK | IMA_FSMAGIC |
 				     IMA_UID | IMA_FOWNER | IMA_FSUUID |
 				     IMA_INMASK | IMA_EUID | IMA_PCR |
-				     IMA_FSNAME | IMA_GID | IMA_EGID |
+				     IMA_FSNAME | IMA_FS_SUBTYPE |
+				     IMA_GID | IMA_EGID |
 				     IMA_FGROUP | IMA_DIGSIG_REQUIRED |
 				     IMA_PERMIT_DIRECTIO | IMA_VALIDATE_ALGOS |
 				     IMA_CHECK_BLACKLIST | IMA_VERITY_REQUIRED))
@@ -1361,7 +1375,8 @@ static bool ima_validate_rule(struct ima_rule_entry *entry)
 		if (entry->flags & ~(IMA_FUNC | IMA_MASK | IMA_FSMAGIC |
 				     IMA_UID | IMA_FOWNER | IMA_FSUUID |
 				     IMA_INMASK | IMA_EUID | IMA_PCR |
-				     IMA_FSNAME | IMA_GID | IMA_EGID |
+				     IMA_FSNAME | IMA_FS_SUBTYPE |
+				     IMA_GID | IMA_EGID |
 				     IMA_FGROUP | IMA_DIGSIG_REQUIRED |
 				     IMA_PERMIT_DIRECTIO | IMA_MODSIG_ALLOWED |
 				     IMA_CHECK_BLACKLIST | IMA_VALIDATE_ALGOS))
@@ -1374,7 +1389,8 @@ static bool ima_validate_rule(struct ima_rule_entry *entry)
 
 		if (entry->flags & ~(IMA_FUNC | IMA_FSMAGIC | IMA_UID |
 				     IMA_FOWNER | IMA_FSUUID | IMA_EUID |
-				     IMA_PCR | IMA_FSNAME | IMA_GID | IMA_EGID |
+				     IMA_PCR | IMA_FSNAME | IMA_FS_SUBTYPE |
+				     IMA_GID | IMA_EGID |
 				     IMA_FGROUP))
 			return false;
 
@@ -1554,6 +1570,14 @@ static int ima_parse_rule(char *rule, struct ima_rule_entry *entry)
 
 			entry->action = AUDIT;
 			break;
+		case Opt_dont_audit:
+			ima_log_string(ab, "action", "dont_audit");
+
+			if (entry->action != UNKNOWN)
+				result = -EINVAL;
+
+			entry->action = DONT_AUDIT;
+			break;
 		case Opt_hash:
 			ima_log_string(ab, "action", "hash");
 
@@ -1664,6 +1688,22 @@ static int ima_parse_rule(char *rule, struct ima_rule_entry *entry)
 			}
 			result = 0;
 			entry->flags |= IMA_FSNAME;
+			break;
+		case Opt_fs_subtype:
+			ima_log_string(ab, "fs_subtype", args[0].from);
+
+			if (entry->fs_subtype) {
+				result = -EINVAL;
+				break;
+			}
+
+			entry->fs_subtype = kstrdup(args[0].from, GFP_KERNEL);
+			if (!entry->fs_subtype) {
+				result = -ENOMEM;
+				break;
+			}
+			result = 0;
+			entry->flags |= IMA_FS_SUBTYPE;
 			break;
 		case Opt_keyrings:
 			ima_log_string(ab, "keyrings", args[0].from);
@@ -2192,6 +2232,8 @@ int ima_policy_show(struct seq_file *m, void *v)
 		seq_puts(m, pt(Opt_dont_appraise));
 	if (entry->action & AUDIT)
 		seq_puts(m, pt(Opt_audit));
+	if (entry->action & DONT_AUDIT)
+		seq_puts(m, pt(Opt_dont_audit));
 	if (entry->action & HASH)
 		seq_puts(m, pt(Opt_hash));
 	if (entry->action & DONT_HASH)
@@ -2225,6 +2267,12 @@ int ima_policy_show(struct seq_file *m, void *v)
 	if (entry->flags & IMA_FSNAME) {
 		snprintf(tbuf, sizeof(tbuf), "%s", entry->fsname);
 		seq_printf(m, pt(Opt_fsname), tbuf);
+		seq_puts(m, " ");
+	}
+
+	if (entry->flags & IMA_FS_SUBTYPE) {
+		snprintf(tbuf, sizeof(tbuf), "%s", entry->fs_subtype);
+		seq_printf(m, pt(Opt_fs_subtype), tbuf);
 		seq_puts(m, " ");
 	}
 
