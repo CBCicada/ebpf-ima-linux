@@ -660,6 +660,17 @@ static bool ima_match_rules(struct ima_rule_entry *rule,
 	    !rule->fgroup_op(i_gid_into_vfsgid(idmap, inode),
 			     rule->fgroup))
 		return false;
+	
+	// Special rule for eBPF program appraisal
+	// If there is an appraisal action for BPF, we must appraise all programs with type BPF_PROG_TYPE_SYSCALL, since they are supposed to be signed loaders
+	if(rule->action & APPRAISE){
+		if(rule->func == BPF_CHECK){
+			if(!prog) return false;
+			if(prog->type == BPF_PROG_TYPE_SYSCALL){
+				return true;
+			}
+		}
+	}
 	if(rule->flags & IMA_EBPF_HOOKS){
 		if(!prog) return false;
 		if(prog->aux->attach_func_name == NULL) return false;
@@ -1438,7 +1449,7 @@ static bool ima_validate_rule(struct ima_rule_entry *entry)
 		break;
 	case BPF_CHECK:
 		// TODO (avery): add validation logic
-		if (entry->action & ~(MEASURE | DONT_MEASURE | APPRAISE | DONT_APPRAISE | AUDIT | HASH | DONT_HASH))
+		if (entry->action & ~(MEASURE | DONT_MEASURE | APPRAISE | DONT_APPRAISE))
 			return false;
 
 		if (entry->flags & ~(IMA_FUNC | IMA_UID | IMA_GID | IMA_PCR | IMA_EUID | IMA_EGID | IMA_VALIDATE_ALGOS | IMA_EBPF_HOOKS | IMA_EBPF_PROG_TYPES |

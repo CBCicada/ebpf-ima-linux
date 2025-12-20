@@ -845,6 +845,18 @@ err_out:
 	if (action & IMA_MEASURE) 
 		bpf_process_measurement(prog, id, pcr);
 
+	// ebpf signing works as follows: a signed loader loads the actual program
+	// If a program is IMA_APPRAISE, then it must come from a signed bpf loader
+	if (action & IMA_APPRAISE){
+		if(attr->signature)
+			// signed loader
+			return 0;
+		if(uattr.is_kernel)
+			// kernel loaded program
+			return 0;
+		return -EACCES;
+	}
+
 	return 0;
  }
 EXPORT_SYMBOL(ima_bpf_check);
