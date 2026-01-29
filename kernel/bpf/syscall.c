@@ -3030,10 +3030,12 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 	/* eBPF programs must be GPL compatible to use GPL-ed functions */
 	prog->gpl_compatible = license_is_gpl_compatible(license) ? 1 : 0;
 
+	prog->aux->is_signed = false;
 	if (attr->signature) {
 		err = bpf_prog_verify_signature(prog, attr, uattr.is_kernel);
 		if (err)
 			goto free_prog;
+		prog->aux->is_signed = true;
 	}
 
 	prog->orig_prog = NULL;
@@ -3096,6 +3098,8 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 	 */
 	 // TODO(avery): Is this design pattern right? Should I do ifdef here?
 	#ifdef CONFIG_IMA
+	prog->aux->is_kernel = uattr.is_kernel;
+	prog->aux->loader_pid = task_tgid_nr(current);
 	err = ima_bpf_check(prog, attr->prog_name, attr, uattr, uattr_size);
 	if (err < 0)
 		goto free_used_maps;
@@ -4783,6 +4787,7 @@ again:
 
 	return prog;
 }
+EXPORT_SYMBOL_GPL(bpf_prog_get_curr_or_next);
 
 #define BPF_PROG_GET_FD_BY_ID_LAST_FIELD prog_id
 
@@ -5928,6 +5933,7 @@ again:
 
 	return link;
 }
+EXPORT_SYMBOL_GPL(bpf_link_get_curr_or_next);
 
 #define BPF_LINK_GET_FD_BY_ID_LAST_FIELD link_id
 

@@ -847,6 +847,7 @@ err_out:
 
 	// ebpf signing works as follows: a signed loader loads the actual program
 	// If a program is IMA_APPRAISE, then it must come from a signed bpf loader
+	// ISSUE: THIS DOES NOT SUPPORT RE_APPRAISAL SINCE THE LOADER IS IMMEDIATELY UNLOADED AFTER LOADING THE NEW PROGRAM
 	if (action & IMA_APPRAISE){
 		if(attr->signature)
 			// signed loader

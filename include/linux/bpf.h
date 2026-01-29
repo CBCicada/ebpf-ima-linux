@@ -1742,6 +1742,11 @@ struct bpf_prog_aux {
 		struct rcu_head	rcu;
 	};
 	struct bpf_stream stream[2];
+	bool is_signed;
+	#ifdef CONFIG_IMA
+	bool is_kernel;
+	pid_t loader_pid;	/* PID of the process that loaded this program */
+	#endif
 };
 
 struct bpf_prog {

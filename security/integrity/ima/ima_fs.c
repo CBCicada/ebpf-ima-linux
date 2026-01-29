@@ -21,6 +21,10 @@
 #include <linux/rcupdate.h>
 #include <linux/parser.h>
 #include <linux/vmalloc.h>
+#include <linux/bpf.h>
+#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/pid_namespace.h>
 
 #include "ima.h"
 
@@ -494,6 +498,94 @@ static const struct file_operations ima_measure_policy_ops = {
 	.llseek = generic_file_llseek,
 };
 
+
+/*
+ * ima_open_reappraisal_ebpf: sequentialize access to the reappraisal_ebpf file
+ */
+static int ima_open_reappraisal_ebpf(struct inode *inode, struct file *filp)
+{
+	// Only allowing write
+	if (!(filp->f_flags & O_WRONLY)) {
+		return -EACCES;
+	}
+	// If policy is being updated, do not allow reappraisal
+	if (test_and_set_bit(IMA_FS_BUSY, &ima_fs_flags))
+		return -EBUSY;
+	return 0;
+}
+
+/*
+ * ima_release_reappraisal_ebpf - start using the new measure policy rules.
+ *
+ * Initially, ima_measure points to the default policy rules, now
+ * point to the new policy rules, and remove the securityfs policy file,
+ * assuming a valid policy.
+ */
+static int ima_release_reappraisal_ebpf(struct inode *inode, struct file *file)
+{
+
+	pr_info("IMA policy reappraised on BPF programs\n");
+	// TODO (avery) maybe add audit message?
+	clear_bit(IMA_FS_BUSY, &ima_fs_flags);
+	return 0;
+}
+
+static ssize_t ima_trigger_reappraisal_ebpf(struct file *file, const char __user *buf,
+				size_t datalen, loff_t *ppos){
+	struct bpf_prog *prog;
+	struct task_struct *loader;
+	u32 id = 0;
+	int action;
+	struct lsm_prop prop;
+	int pcr;
+
+	// Iterate through prog of all BPF programs
+	while ((prog = bpf_prog_get_curr_or_next(&id)) != NULL) {
+		// get action again
+		action = ima_get_action(&nop_mnt_idmap, NULL, current_cred(), &prop,
+					0, BPF_CHECK, &pcr, NULL, NULL, NULL, prog);
+
+		if (action & IMA_APPRAISE) {
+			// Skip signed loaders
+			if (prog->aux->is_signed) {
+				goto next;
+			}
+
+			// Skip programs loaded by BPF
+			if (prog->aux->is_kernel) {
+				goto next;
+			}
+
+			// Similar to how Jinghao Jia did it
+			// https://github.com/rex-rs/linux/blob/3d33186e5fdb3270b730ff6c11cc651a24107f36/arch/x86/net/rex.c#L92-L98
+			if (prog->aux->loader_pid) {
+				rcu_read_lock();
+				loader = find_task_by_pid_ns(prog->aux->loader_pid, &init_pid_ns);
+				if (loader) {
+					force_sig_fault_to_task(SIGSYS, SYS_SECCOMP, NULL, loader);
+				} else {
+					pr_warn("IMA: Cannot find loader for unapproved BPF prog id=%u name=%s (loader may have exited)\n",
+						prog->aux->id, prog->aux->name);
+				}
+				rcu_read_unlock();
+			}
+
+			// TODO: UNLINK THE EBPF PROGRAM
+		}
+next:
+		bpf_prog_put(prog);
+		id++;
+	}
+
+	return datalen;
+}
+
+static const struct file_operations ima_reappraise_ebpf_ops = {
+	.open = ima_open_reappraisal_ebpf,
+	.write = ima_trigger_reappraisal_ebpf,
+	.release = ima_release_reappraisal_ebpf,
+};
+
 int __init ima_fs_init(void)
 {
 	struct dentry *dentry;
@@ -552,6 +644,15 @@ int __init ima_fs_init(void)
 	dentry = securityfs_create_file("policy", POLICY_FILE_FLAGS,
 					    ima_dir, NULL,
 					    &ima_measure_policy_ops);
+	if (IS_ERR(dentry)) {
+		ret = PTR_ERR(dentry);
+		goto out;
+	}
+
+	// Add a file to allow manual re-appraisal of EBPF programs
+	dentry = securityfs_create_file("reappraise_ebpf", S_IWUSR,
+					ima_dir, NULL,
+					&ima_reappraise_ebpf_ops);
 	if (IS_ERR(dentry)) {
 		ret = PTR_ERR(dentry);
 		goto out;
