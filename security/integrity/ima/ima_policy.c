@@ -661,16 +661,6 @@ static bool ima_match_rules(struct ima_rule_entry *rule,
 			     rule->fgroup))
 		return false;
 	
-	// Special rule for eBPF program appraisal
-	// If there is an appraisal action for BPF, we must appraise all programs with type BPF_PROG_TYPE_SYSCALL, since they are supposed to be signed loaders
-	if(rule->action & APPRAISE){
-		if(rule->func == BPF_CHECK){
-			if(!prog) return false;
-			if(prog->type == BPF_PROG_TYPE_SYSCALL){
-				return true;
-			}
-		}
-	}
 	if(rule->flags & IMA_EBPF_HOOKS){
 		if(!prog) return false;
 		if(prog->aux->attach_func_name == NULL) return false;

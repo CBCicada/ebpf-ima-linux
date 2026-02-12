@@ -841,23 +841,18 @@ err_out:
 	if (!pcr)
 		pcr = CONFIG_IMA_MEASURE_PCR_IDX;
 
+	// ebpf signing works as follows: a signed loader loads the actual program
+	// If a program is IMA_APPRAISE, then it must come from a signed bpf loader
+	if (action & IMA_APPRAISE){
+		if(!prog->aux->is_signed)
+			return -EACCES;
+	}
+
+	// decision: only measure the programs that are not blocked
 	/* Process measurement */
 	if (action & IMA_MEASURE) 
 		bpf_process_measurement(prog, id, pcr);
-
-	// ebpf signing works as follows: a signed loader loads the actual program
-	// If a program is IMA_APPRAISE, then it must come from a signed bpf loader
-	// ISSUE: THIS DOES NOT SUPPORT RE_APPRAISAL SINCE THE LOADER IS IMMEDIATELY UNLOADED AFTER LOADING THE NEW PROGRAM
-	if (action & IMA_APPRAISE){
-		if(attr->signature)
-			// signed loader
-			return 0;
-		if(uattr.is_kernel)
-			// kernel loaded program
-			return 0;
-		return -EACCES;
-	}
-
+	
 	return 0;
  }
 EXPORT_SYMBOL(ima_bpf_check);

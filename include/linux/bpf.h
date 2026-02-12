@@ -1744,7 +1744,6 @@ struct bpf_prog_aux {
 	struct bpf_stream stream[2];
 	bool is_signed;
 	#ifdef CONFIG_IMA
-	bool is_kernel;
 	pid_t loader_pid;	/* PID of the process that loaded this program */
 	#endif
 };
@@ -2293,7 +2292,11 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 			u64 bpf_cookie,
 			struct bpf_prog_array **new_array);
 
-struct bpf_run_ctx {};
+struct bpf_run_ctx {
+	#ifdef CONFIG_IMA
+	bool is_signed;
+	#endif
+};
 
 struct bpf_cg_run_ctx {
 	struct bpf_run_ctx run_ctx;

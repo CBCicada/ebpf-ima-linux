@@ -3038,6 +3038,15 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 		prog->aux->is_signed = true;
 	}
 
+	#ifdef CONFIG_IMA
+	// signing propagates - a signed loader's child is also signed
+	if(!attr->signature){
+		if(uattr.is_kernel && current->bpf_ctx) {
+			prog->aux->is_signed = current->bpf_ctx->is_signed;
+		}
+	}
+	#endif
+
 	prog->orig_prog = NULL;
 	prog->jited = 0;
 
@@ -3098,7 +3107,6 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 	 */
 	 // TODO(avery): Is this design pattern right? Should I do ifdef here?
 	#ifdef CONFIG_IMA
-	prog->aux->is_kernel = uattr.is_kernel;
 	prog->aux->loader_pid = task_tgid_nr(current);
 	err = ima_bpf_check(prog, attr->prog_name, attr, uattr, uattr_size);
 	if (err < 0)
@@ -4699,6 +4707,8 @@ static int bpf_prog_test_run(const union bpf_attr *attr,
 {
 	struct bpf_prog *prog;
 	int ret = -ENOTSUPP;
+	struct bpf_run_ctx run_ctx = {};
+	struct bpf_run_ctx *old_ctx;
 
 	if (CHECK_ATTR(BPF_PROG_TEST_RUN))
 		return -EINVAL;
@@ -4715,8 +4725,17 @@ static int bpf_prog_test_run(const union bpf_attr *attr,
 	if (IS_ERR(prog))
 		return PTR_ERR(prog);
 
+	#ifdef CONFIG_IMA
+	run_ctx.is_signed = prog->aux->is_signed;
+	old_ctx = bpf_set_run_ctx(&run_ctx);
+	#endif
+
 	if (prog->aux->ops->test_run)
 		ret = prog->aux->ops->test_run(prog, attr, uattr);
+
+	#ifdef CONFIG_IMA
+	bpf_reset_run_ctx(old_ctx);
+	#endif
 
 	bpf_prog_put(prog);
 	return ret;
@@ -6353,6 +6372,10 @@ int kern_sys_bpf(int cmd, union bpf_attr *attr, unsigned int size)
 			bpf_prog_put(prog);
 			return -EINVAL;
 		}
+
+		#ifdef CONFIG_IMA
+		run_ctx.run_ctx.is_signed = 1; // IMA does not appraise BPF programs loaded by the kernel, as it is not currently supported
+		#endif
 
 		run_ctx.bpf_cookie = 0;
 		if (!__bpf_prog_enter_sleepable_recur(prog, &run_ctx)) {

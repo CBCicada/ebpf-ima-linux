@@ -547,12 +547,7 @@ static ssize_t ima_trigger_reappraisal_ebpf(struct file *file, const char __user
 
 		if (action & IMA_APPRAISE) {
 			// Skip signed loaders
-			if (prog->aux->is_signed) {
-				goto next;
-			}
-
-			// Skip programs loaded by BPF
-			if (prog->aux->is_kernel) {
+			if(prog->aux->is_signed){
 				goto next;
 			}
 
