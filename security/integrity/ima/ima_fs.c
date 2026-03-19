@@ -533,7 +533,6 @@ static int ima_release_reappraisal_ebpf(struct inode *inode, struct file *file)
 static ssize_t ima_trigger_reappraisal_ebpf(struct file *file, const char __user *buf,
 				size_t datalen, loff_t *ppos){
 	struct bpf_prog *prog;
-	struct task_struct *loader;
 	u32 id = 0;
 	int action;
 	struct lsm_prop prop;
@@ -546,26 +545,20 @@ static ssize_t ima_trigger_reappraisal_ebpf(struct file *file, const char __user
 					0, BPF_CHECK, &pcr, NULL, NULL, NULL, prog);
 
 		if (action & IMA_APPRAISE) {
-			// Skip signed loaders
-			if(prog->aux->is_signed){
+			if (prog->aux->is_signed)
 				goto next;
-			}
 
-			// Similar to how Jinghao Jia did it
-			// https://github.com/rex-rs/linux/blob/3d33186e5fdb3270b730ff6c11cc651a24107f36/arch/x86/net/rex.c#L92-L98
-			if (prog->aux->loader_pid) {
-				rcu_read_lock();
-				loader = find_task_by_pid_ns(prog->aux->loader_pid, &init_pid_ns);
-				if (loader) {
-					force_sig_fault_to_task(SIGSYS, SYS_SECCOMP, NULL, loader);
-				} else {
-					pr_warn("IMA: Cannot find loader for unapproved BPF prog id=%u name=%s (loader may have exited)\n",
-						prog->aux->id, prog->aux->name);
-				}
-				rcu_read_unlock();
-			}
-
-			// TODO: UNLINK THE EBPF PROGRAM
+			if (bpf_prog_purge_link(prog))
+				integrity_audit_msg(AUDIT_INTEGRITY_RULE,
+						    NULL, prog->aux->name,
+						    "bpf_purge",
+						    "direct-attach-remaining",
+						    prog->aux->id, 1);
+			else
+				integrity_audit_msg(AUDIT_INTEGRITY_RULE,
+						    NULL, prog->aux->name,
+						    "bpf_purge", "success",
+						    prog->aux->id, 0);
 		}
 next:
 		bpf_prog_put(prog);

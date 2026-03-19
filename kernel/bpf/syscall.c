@@ -2570,6 +2570,9 @@ struct bpf_prog *bpf_prog_inc_not_zero(struct bpf_prog *prog)
 {
 	int refold;
 
+	if (bpf_prog_is_condemned(prog))
+		return ERR_PTR(-EPERM);
+
 	refold = atomic64_fetch_add_unless(&prog->aux->refcnt, 1, 0);
 
 	if (!refold)
@@ -2608,6 +2611,9 @@ static struct bpf_prog *__bpf_prog_get(u32 ufd, enum bpf_prog_type *attach_type,
 	prog = fd_file(f)->private_data;
 	if (!bpf_prog_get_ok(prog, attach_type, attach_drv))
 		return ERR_PTR(-EINVAL);
+
+	if (bpf_prog_is_condemned(prog))
+		return ERR_PTR(-EPERM);
 
 	bpf_prog_inc(prog);
 	return prog;
@@ -3515,6 +3521,8 @@ struct bpf_link *bpf_link_get_from_fd(u32 ufd)
 		return ERR_PTR(-EINVAL);
 
 	link = fd_file(f)->private_data;
+	if (link->prog && bpf_prog_is_condemned(link->prog))
+		return ERR_PTR(-EPERM);
 	bpf_link_inc(link);
 	return link;
 }
@@ -4507,6 +4515,10 @@ static int bpf_prog_attach(const union bpf_attr *attr)
 	struct bpf_prog *prog;
 	int ret;
 
+	// IMA appraisal cannot allow direct attachments, as those programs cannot be reappraised.
+	if(is_ima_appraise_enabled())
+		return -EPERM;
+
 	if (CHECK_ATTR(BPF_PROG_ATTACH))
 		return -EINVAL;
 
@@ -5416,6 +5428,24 @@ static int bpf_link_get_info_by_fd(struct file *file,
 	return 0;
 }
 
+bool bpf_file_references_prog(struct file *file, struct bpf_prog *prog)
+{
+	// potentially not needed, since we only worry about link
+    if (file->f_op == &bpf_prog_fops) {
+        struct bpf_prog *fp = file->private_data;
+        return fp == prog;
+    }
+
+    if (file->f_op == &bpf_link_fops ||
+        file->f_op == &bpf_link_fops_poll) {
+        struct bpf_link *link = file->private_data;
+        return link->prog == prog;
+    }
+
+    return false;
+}
+EXPORT_SYMBOL_GPL(bpf_file_references_prog);
+
 
 static int token_get_info_by_fd(struct file *file,
 				struct bpf_token *token,
@@ -5908,6 +5938,8 @@ static int link_detach(union bpf_attr *attr)
 
 struct bpf_link *bpf_link_inc_not_zero(struct bpf_link *link)
 {
+	if (link->prog && bpf_prog_is_condemned(link->prog))
+		return ERR_PTR(-EPERM);
 	return atomic64_fetch_add_unless(&link->refcnt, 1, 0) ? link : ERR_PTR(-ENOENT);
 }
 EXPORT_SYMBOL(bpf_link_inc_not_zero);

@@ -1743,8 +1743,10 @@ struct bpf_prog_aux {
 	};
 	struct bpf_stream stream[2];
 	bool is_signed;
+	struct list_head pin_list;
+	struct mutex pin_mutex;
 	#ifdef CONFIG_IMA
-	pid_t loader_pid;	/* PID of the process that loaded this program */
+	bool condemned;
 	#endif
 };
 
@@ -2544,6 +2546,32 @@ int  generic_map_delete_batch(struct bpf_map *map,
 struct bpf_map *bpf_map_get_curr_or_next(u32 *id);
 struct bpf_prog *bpf_prog_get_curr_or_next(u32 *id);
 
+int bpf_prog_purge_link(struct bpf_prog *prog);
+bool bpf_file_references_prog(struct file *file, struct bpf_prog *prog);
+void bpf_unpin_prog(struct bpf_prog *prog);
+
+#ifdef CONFIG_IMA
+static inline bool bpf_prog_is_condemned(const struct bpf_prog *prog)
+{
+	return READ_ONCE(prog->aux->condemned);
+}
+
+static inline void bpf_prog_condemn(struct bpf_prog *prog)
+{
+	WRITE_ONCE(prog->aux->condemned, true);
+	/* Full barrier: after this returns, every CPU has observed
+	 * condemned=true.  No new references can be created from
+	 * this point forward.
+	 */
+	synchronize_rcu();
+}
+#else
+static inline bool bpf_prog_is_condemned(const struct bpf_prog *prog)
+{
+	return false;
+}
+static inline void bpf_prog_condemn(struct bpf_prog *prog) {}
+#endif
 
 int bpf_map_alloc_pages(const struct bpf_map *map, int nid,
 			unsigned long nr_pages, struct page **page_array);

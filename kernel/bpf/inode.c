@@ -30,18 +30,30 @@ enum bpf_type {
 	BPF_TYPE_LINK,
 };
 
+struct bpf_pin_node {
+	struct list_head list;
+	struct dentry    *dentry;
+};
+
 static void *bpf_any_get(void *raw, enum bpf_type type)
 {
 	switch (type) {
 	case BPF_TYPE_PROG:
+		if (bpf_prog_is_condemned((struct bpf_prog *)raw))
+			return ERR_PTR(-EPERM);
 		bpf_prog_inc(raw);
 		break;
 	case BPF_TYPE_MAP:
 		bpf_map_inc_with_uref(raw);
 		break;
-	case BPF_TYPE_LINK:
-		bpf_link_inc(raw);
+	case BPF_TYPE_LINK: {
+		struct bpf_link *link = raw;
+
+		if (link->prog && bpf_prog_is_condemned(link->prog))
+			return ERR_PTR(-EPERM);
+		bpf_link_inc(link);
 		break;
+	}
 	default:
 		WARN_ON_ONCE(1);
 		break;
@@ -98,6 +110,9 @@ static const struct inode_operations bpf_dir_iops;
 static const struct inode_operations bpf_prog_iops = { };
 static const struct inode_operations bpf_map_iops  = { };
 static const struct inode_operations bpf_link_iops  = { };
+
+static void bpf_pin_list_remove(struct bpf_prog *prog, struct dentry *dentry);
+static int bpf_unlink(struct inode *dir, struct dentry *dentry);
 
 struct inode *bpf_get_inode(struct super_block *sb,
 			    const struct inode *dir,
@@ -408,7 +423,7 @@ static const struct inode_operations bpf_dir_iops = {
 	.rmdir		= simple_rmdir,
 	.rename		= simple_rename,
 	.link		= simple_link,
-	.unlink		= simple_unlink,
+	.unlink		= bpf_unlink,
 };
 
 /* pin iterator link into bpffs */
@@ -431,15 +446,30 @@ static int bpf_iter_link_pin_kernel(struct dentry *parent,
 static int bpf_obj_do_pin(int path_fd, const char __user *pathname, void *raw,
 			  enum bpf_type type)
 {
+	struct bpf_pin_node *pin_node = NULL;
+	struct bpf_prog *pin_owner = NULL;
 	struct dentry *dentry;
 	struct inode *dir;
 	struct path path;
 	umode_t mode;
 	int ret;
 
+	if (type == BPF_TYPE_PROG)
+		pin_owner = raw;
+	else if (type == BPF_TYPE_LINK)
+		pin_owner = ((struct bpf_link *)raw)->prog;
+
+	if (pin_owner) {
+		pin_node = kmalloc(sizeof(*pin_node), GFP_KERNEL);
+		if (!pin_node)
+			return -ENOMEM;
+	}
+
 	dentry = start_creating_user_path(path_fd, pathname, &path, 0);
-	if (IS_ERR(dentry))
+	if (IS_ERR(dentry)) {
+		kfree(pin_node);
 		return PTR_ERR(dentry);
+	}
 
 	dir = d_inode(path.dentry);
 	if (dir->i_op != &bpf_dir_iops) {
@@ -465,7 +495,16 @@ static int bpf_obj_do_pin(int path_fd, const char __user *pathname, void *raw,
 	default:
 		ret = -EPERM;
 	}
+
+	if (!ret && pin_node) {
+		pin_node->dentry = dget(dentry);
+		mutex_lock(&pin_owner->aux->pin_mutex);
+		list_add(&pin_node->list, &pin_owner->aux->pin_list);
+		mutex_unlock(&pin_owner->aux->pin_mutex);
+		pin_node = NULL;
+	}
 out:
+	kfree(pin_node);
 	end_creating_path(&path, dentry);
 	return ret;
 }
@@ -570,6 +609,9 @@ static struct bpf_prog *__get_prog_inode(struct inode *inode, enum bpf_prog_type
 
 	if (!bpf_prog_get_ok(prog, &type, false))
 		return ERR_PTR(-EINVAL);
+
+	if (bpf_prog_is_condemned(prog))
+		return ERR_PTR(-EPERM);
 
 	bpf_prog_inc(prog);
 	return prog;
@@ -768,6 +810,70 @@ static int bpf_show_options(struct seq_file *m, struct dentry *root)
 	}
 
 	return 0;
+}
+
+static void bpf_pin_list_remove(struct bpf_prog *prog, struct dentry *dentry)
+{
+	struct bpf_pin_node *node;
+
+	mutex_lock(&prog->aux->pin_mutex);
+	list_for_each_entry(node, &prog->aux->pin_list, list) {
+		if (node->dentry == dentry) {
+			list_del(&node->list);
+			mutex_unlock(&prog->aux->pin_mutex);
+			dput(dentry);
+			kfree(node);
+			return;
+		}
+	}
+	mutex_unlock(&prog->aux->pin_mutex);
+	// can't find in the list, can only happen if prog is being terminated
+}
+
+static int bpf_unlink(struct inode *dir, struct dentry *dentry)
+{
+	struct inode *inode = d_inode(dentry);
+	struct bpf_prog *owner = NULL;
+	enum bpf_type type;
+
+	if (!bpf_inode_type(inode, &type)) {
+		if (type == BPF_TYPE_PROG)
+			owner = inode->i_private;
+		else if (type == BPF_TYPE_LINK)
+			owner = ((struct bpf_link *)inode->i_private)->prog;
+
+		if (owner)
+			bpf_pin_list_remove(owner, dentry);
+	}
+
+	return simple_unlink(dir, dentry);
+}
+
+void bpf_unpin_prog(struct bpf_prog *prog)
+{
+	struct bpf_pin_node *node, *tmp;
+	LIST_HEAD(to_unlink);
+
+	// move the link to prevent deadlock with remove
+	mutex_lock(&prog->aux->pin_mutex);
+	list_splice_init(&prog->aux->pin_list, &to_unlink);
+	mutex_unlock(&prog->aux->pin_mutex);
+
+	list_for_each_entry_safe(node, tmp, &to_unlink, list) {
+		struct dentry *dentry = node->dentry;
+		struct inode *dir = d_inode(dentry->d_parent);
+
+		inode_lock(dir);
+		if (simple_positive(dentry))
+			simple_unlink(dir, dentry);
+		inode_unlock(dir);
+
+		d_delete(dentry);
+		dput(dentry);
+
+		list_del(&node->list);
+		kfree(node);
+	}
 }
 
 static void bpf_destroy_inode(struct inode *inode)

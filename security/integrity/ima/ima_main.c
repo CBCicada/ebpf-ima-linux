@@ -833,7 +833,7 @@ err_out:
 	int action;
 	struct lsm_prop prop; // TODO (avery): Use LSM properties with eBPF? Do they exist?
 	int pcr;
-	
+
 	action = ima_get_action(&nop_mnt_idmap, NULL, current_cred(), &prop,
 				0, BPF_CHECK,
 				&pcr, NULL, NULL, NULL, prog);
