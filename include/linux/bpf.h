@@ -2546,7 +2546,12 @@ int  generic_map_delete_batch(struct bpf_map *map,
 struct bpf_map *bpf_map_get_curr_or_next(u32 *id);
 struct bpf_prog *bpf_prog_get_curr_or_next(u32 *id);
 
-int bpf_prog_purge_link(struct bpf_prog *prog);
+#define BPF_PURGE_SIGNAL_DEFAULT	10	/* SIGUSR1 */
+#define BPF_PURGE_TIMEOUT_DEFAULT	5000	/* ms */
+#define BPF_PURGE_FORCE_DEFAULT		false
+
+int bpf_prog_purge_link(struct bpf_prog *prog, int signal, unsigned long timeout_ms,
+			bool force);
 bool bpf_file_references_prog(struct file *file, struct bpf_prog *prog);
 void bpf_unpin_prog(struct bpf_prog *prog);
 

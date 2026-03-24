@@ -530,29 +530,91 @@ static int ima_release_reappraisal_ebpf(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static ssize_t ima_trigger_reappraisal_ebpf(struct file *file, const char __user *buf,
-				size_t datalen, loff_t *ppos){
-	struct bpf_prog *prog;
-	u32 id = 0;
-	int action;
-	struct lsm_prop prop;
-	int pcr;
+static int parse_purge_opts(const char *buf, int *signal,
+			    unsigned long *timeout_ms, bool *force)
+{
+	const char *p;
+	int val;
 
-	// Iterate through prog of all BPF programs
+	*signal = BPF_PURGE_SIGNAL_DEFAULT;
+	*timeout_ms = BPF_PURGE_TIMEOUT_DEFAULT;
+	*force = BPF_PURGE_FORCE_DEFAULT;
+
+	if (!buf || !*buf)
+		return 0;
+
+	p = strstr(buf, "signal=");
+	if (p) {
+		if (sscanf(p, "signal=%d", &val) != 1)
+			return -EINVAL;
+		if (val < 0 || val > _NSIG)
+			return -EINVAL;
+		*signal = val;
+	}
+
+	p = strstr(buf, "timeout=");
+	if (p) {
+		if (sscanf(p, "timeout=%lu", timeout_ms) != 1)
+			return -EINVAL;
+	}
+
+	p = strstr(buf, "force=");
+	if (p) {
+		if (sscanf(p, "force=%d", &val) != 1)
+			return -EINVAL;
+		if (val != 0 && val != 1)
+			return -EINVAL;
+		*force = !!val;
+	}
+
+	return 0;
+}
+
+static ssize_t ima_trigger_reappraisal_ebpf(struct file *file, const char __user *buf,
+				size_t datalen, loff_t *ppos)
+{
+	int signal, action, pcr, ret;
+	unsigned long timeout_ms;
+	struct bpf_prog *prog;
+	struct lsm_prop prop;
+	bool force;
+	char *kbuf;
+	u32 id = 0;
+
+	if (datalen > 0) {
+		kbuf = kmalloc(datalen + 1, GFP_KERNEL);
+		if (!kbuf)
+			return -ENOMEM;
+		if (copy_from_user(kbuf, buf, datalen)) {
+			kfree(kbuf);
+			return -EFAULT;
+		}
+		kbuf[datalen] = '\0';
+	} else {
+		kbuf = NULL;
+	}
+
+	ret = parse_purge_opts(kbuf, &signal, &timeout_ms, &force);
+	kfree(kbuf);
+	if (ret)
+		return ret;
+
 	while ((prog = bpf_prog_get_curr_or_next(&id)) != NULL) {
-		// get action again
-		action = ima_get_action(&nop_mnt_idmap, NULL, current_cred(), &prop,
-					0, BPF_CHECK, &pcr, NULL, NULL, NULL, prog);
+		action = ima_get_action(&nop_mnt_idmap, NULL, current_cred(),
+					&prop, 0, BPF_CHECK, &pcr,
+					NULL, NULL, NULL, prog);
 
 		if (action & IMA_APPRAISE) {
 			if (prog->aux->is_signed)
 				goto next;
 
-			if (bpf_prog_purge_link(prog))
+			ret = bpf_prog_purge_link(prog, signal, timeout_ms,
+						  force);
+			if (ret && ret != -EINPROGRESS)
 				integrity_audit_msg(AUDIT_INTEGRITY_RULE,
 						    NULL, prog->aux->name,
 						    "bpf_purge",
-						    "direct-attach-remaining",
+						    "refs-remaining",
 						    prog->aux->id, 1);
 			else
 				integrity_audit_msg(AUDIT_INTEGRITY_RULE,
