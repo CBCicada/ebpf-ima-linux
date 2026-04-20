@@ -229,6 +229,9 @@ int bpf_prog_purge_link(struct bpf_prog *prog, int signal, unsigned long timeout
 
 		left = wait_for_completion_timeout(&ctx->done,
 					msecs_to_jiffies(timeout_ms));
+		pr_info("bpf_prog_purge[id=%u]: queued=%d wait_left_jiffies=%lu\n",
+			prog->aux->id, queued, left);
+
 		if (!left) {
 			pr_warn("bpf_prog_purge: timeout waiting for %d tasks (prog id=%u)\n",
 				atomic_read(&ctx->pending),
@@ -236,13 +239,6 @@ int bpf_prog_purge_link(struct bpf_prog *prog, int signal, unsigned long timeout
 			if (force)
 				sigkill_stragglers(ctx);
 		}
-	}
-
-	if (timeout_ms > 0 && force && atomic64_read(&prog->aux->refcnt) > 1){
-		pr_err("bpf_prog_purge: failed to purge prog id=%u, refs remain\n",
-		       prog->aux->id);
-		purge_ctx_put(ctx);
-		return -EBUSY;
 	}
 
 	ret = left > 0 ? -EINPROGRESS : 0;
