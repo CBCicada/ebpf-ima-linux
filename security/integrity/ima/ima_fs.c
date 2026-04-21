@@ -605,7 +605,8 @@ static ssize_t ima_trigger_reappraisal_ebpf(struct file *file, const char __user
 					NULL, NULL, NULL, prog);
 
 		if (action & IMA_APPRAISE) {
-			if (prog->aux->is_signed)
+			int bl = bpf_check_blacklist(prog);
+			if (bl == 0 && prog->aux->is_signed)
 				goto next;
 
 			ret = bpf_prog_purge_link(prog, signal, timeout_ms,

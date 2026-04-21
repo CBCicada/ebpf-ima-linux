@@ -29,6 +29,7 @@
 #include <linux/evm.h>
 #include <linux/crash_dump.h>
 #include <linux/filter.h>
+#include <keys/system_keyring.h>
 
 #include "ima.h"
 
@@ -817,13 +818,33 @@ err_out:
 			    audit_cause, ret, 0, ret);
 	return ret;
 }
+/* Check the system .blacklist keyring for prog's hash. */
+int bpf_check_blacklist(struct bpf_prog *prog)
+{
+	struct ima_max_digest_data hash;
+	struct ima_digest_data *hdr = container_of(&hash.hdr,
+					struct ima_digest_data, hdr);
+	int ret;
+
+	hdr->algo = ima_hash_algo;
+	hdr->length = hash_digest_size[ima_hash_algo];
+
+	ret = ima_calc_buffer_hash(prog->insnsi,
+				   bpf_prog_insn_size(prog), hdr);
+	if (ret < 0)
+		return ret;
+
+	return is_binary_blacklisted(hdr->digest, hdr->length);
+}
+EXPORT_SYMBOL_GPL(bpf_check_blacklist);
+
 /*
- * ima_bpf_check - measure and appraise eBPF programs based on policy 
+ * ima_bpf_check - measure and appraise eBPF programs based on policy
  * @prog: pointer to BPF program to be measured
- * @id: function BPF program will attach to  
+ * @id: function BPF program will attach to
  * @attr: BPF program attributes
  * @uattr: pointer to userspace memory
- * @uattr_size: size of uattr 
+ * @uattr_size: size of uattr
  *
  * Returns 0 on success
  */
@@ -844,6 +865,12 @@ err_out:
 	// ebpf signing works as follows: a signed loader loads the actual program
 	// If a program is IMA_APPRAISE, then it must come from a signed bpf loader
 	if (action & IMA_APPRAISE){
+		int bl = bpf_check_blacklist(prog);
+		if (bl < 0) {
+			pr_warn("ima_bpf_check: prog %s (id=%u) rejected by blacklist (rc=%d)\n",
+				id, prog->aux->id, bl);
+			return bl;
+		}
 		if(!prog->aux->is_signed)
 			return -EACCES;
 	}
