@@ -27,7 +27,6 @@ extern int ima_measure_critical_data(const char *event_label,
 extern int ima_bpf_check(struct bpf_prog *prog, char *id,
 			     union bpf_attr *attr, bpfptr_t uattr,
 			     __u32 uattr_size);
-extern int bpf_check_blacklist(struct bpf_prog *prog);
 #ifdef CONFIG_IMA_APPRAISE_BOOTPARAM
 extern void ima_appraise_parse_cmdline(void);
 #else

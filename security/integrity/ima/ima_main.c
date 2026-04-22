@@ -836,7 +836,7 @@ int bpf_check_blacklist(struct bpf_prog *prog)
 
 	return is_binary_blacklisted(hdr->digest, hdr->length);
 }
-EXPORT_SYMBOL_GPL(bpf_check_blacklist);
+EXPORT_SYMBOL(bpf_check_blacklist);
 
 /*
  * ima_bpf_check - measure and appraise eBPF programs based on policy
