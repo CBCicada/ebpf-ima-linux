@@ -3036,19 +3036,20 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 	/* eBPF programs must be GPL compatible to use GPL-ed functions */
 	prog->gpl_compatible = license_is_gpl_compatible(license) ? 1 : 0;
 
-	prog->aux->is_signed = false;
+	prog->aux->is_signed_ima = false;
 	if (attr->signature) {
 		err = bpf_prog_verify_signature(prog, attr, uattr.is_kernel);
 		if (err)
 			goto free_prog;
-		prog->aux->is_signed = true;
+		bpf_prog_appraise_against_ima(prog, attr, uattr.is_kernel);
 	}
 
 	#ifdef CONFIG_IMA
-	// signing propagates - a signed loader's child is also signed
 	if(!attr->signature){
 		if(uattr.is_kernel && current->bpf_ctx) {
-			prog->aux->is_signed = current->bpf_ctx->is_signed;
+			prog->aux->is_signed_ima = current->bpf_ctx->is_signed_ima;
+			memcpy(prog->aux->signing_key_tbs,
+			       current->bpf_ctx->signing_key_tbs, 32);
 		}
 	}
 	#endif
@@ -4736,7 +4737,8 @@ static int bpf_prog_test_run(const union bpf_attr *attr,
 		return PTR_ERR(prog);
 
 	#ifdef CONFIG_IMA
-	run_ctx.is_signed = prog->aux->is_signed;
+	run_ctx.is_signed_ima = prog->aux->is_signed_ima;
+	memcpy(run_ctx.signing_key_tbs, prog->aux->signing_key_tbs, 32);
 	old_ctx = bpf_set_run_ctx(&run_ctx);
 	#endif
 
@@ -6404,7 +6406,7 @@ int kern_sys_bpf(int cmd, union bpf_attr *attr, unsigned int size)
 		}
 
 		#ifdef CONFIG_IMA
-		run_ctx.run_ctx.is_signed = 1; // IMA does not appraise BPF programs loaded by the kernel, as it is not currently supported
+		run_ctx.run_ctx.is_signed_ima = 1; // kernel-loaded path: trusted by construction; signing_key_tbs left zero
 		#endif
 
 		run_ctx.bpf_cookie = 0;

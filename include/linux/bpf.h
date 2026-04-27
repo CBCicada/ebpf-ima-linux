@@ -1742,7 +1742,8 @@ struct bpf_prog_aux {
 		struct rcu_head	rcu;
 	};
 	struct bpf_stream stream[2];
-	bool is_signed;
+	bool is_signed_ima;
+	u8 signing_key_tbs[32]; /* sha256(TBSCertificate); valid iff is_signed_ima */
 	struct list_head pin_list;
 	struct mutex pin_mutex;
 	#ifdef CONFIG_IMA
@@ -2296,7 +2297,8 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 
 struct bpf_run_ctx {
 	#ifdef CONFIG_IMA
-	bool is_signed;
+	bool is_signed_ima;
+	u8 signing_key_tbs[32];
 	#endif
 };
 

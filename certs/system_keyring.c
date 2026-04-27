@@ -418,6 +418,35 @@ int verify_pkcs7_signature(const void *data, size_t len,
 }
 EXPORT_SYMBOL_GPL(verify_pkcs7_signature);
 
+// duplicate of verify_pkcs7_signature but returns tbs if signature is valid
+int verify_pkcs7_signature_get_signer_tbs(const void *data, size_t len,
+					  const void *raw_pkcs7, size_t pkcs7_len,
+					  struct key *trusted_keys,
+					  enum key_being_used_for usage,
+					  int (*view_content)(void *ctx,
+							      const void *data, size_t len,
+							      size_t asn1hdrlen),
+					  void *ctx,
+					  u8 *out_tbs)
+{
+	struct pkcs7_message *pkcs7;
+	int ret;
+
+	pkcs7 = pkcs7_parse_message(raw_pkcs7, pkcs7_len);
+	if (IS_ERR(pkcs7))
+		return PTR_ERR(pkcs7);
+
+	ret = verify_pkcs7_message_sig(data, len, pkcs7, trusted_keys, usage,
+				       view_content, ctx);
+	if (ret == 0 && out_tbs)
+		ret = pkcs7_get_signer_tbs_sha256(pkcs7, out_tbs);
+
+	pkcs7_free_message(pkcs7);
+	pr_devel("<==%s() = %d\n", __func__, ret);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(verify_pkcs7_signature_get_signer_tbs);
+
 #endif /* CONFIG_SYSTEM_DATA_VERIFICATION */
 
 #ifdef CONFIG_INTEGRITY_PLATFORM_KEYRING

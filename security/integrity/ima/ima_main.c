@@ -29,6 +29,8 @@
 #include <linux/evm.h>
 #include <linux/crash_dump.h>
 #include <linux/filter.h>
+#include <linux/key-type.h>
+#include <linux/verification.h>
 #include <keys/system_keyring.h>
 
 #include "ima.h"
@@ -871,7 +873,7 @@ EXPORT_SYMBOL(bpf_check_blacklist);
 				id, prog->aux->id, bl);
 			return bl;
 		}
-		if(!prog->aux->is_signed)
+		if(!prog->aux->is_signed_ima)
 			return -EACCES;
 	}
 
@@ -883,6 +885,53 @@ EXPORT_SYMBOL(bpf_check_blacklist);
 	return 0;
  }
 EXPORT_SYMBOL(ima_bpf_check);
+
+int bpf_prog_appraise_against_ima(struct bpf_prog *prog,
+				  union bpf_attr *attr, bool is_kernel)
+{
+	bpfptr_t usig;
+	struct key *ima_keyring;
+	void *sig;
+	int err;
+
+	if (!attr->signature || attr->signature_size == 0)
+		return 0;
+
+	ima_keyring = request_key(&key_type_keyring, ".ima", NULL);
+	if (IS_ERR(ima_keyring))
+		return PTR_ERR(ima_keyring);
+
+	usig = make_bpfptr(attr->signature, is_kernel);
+	sig = kvmemdup_bpfptr(usig, attr->signature_size);
+	if (IS_ERR(sig)) {
+		key_put(ima_keyring);
+		return PTR_ERR(sig);
+	}
+
+	err = verify_pkcs7_signature_get_signer_tbs(
+		prog->insnsi, prog->len * sizeof(struct bpf_insn),
+		sig, attr->signature_size,
+		ima_keyring, VERIFYING_BPF_SIGNATURE,
+		NULL, NULL,
+		prog->aux->signing_key_tbs);
+	if (err == 0)
+		prog->aux->is_signed_ima = true;
+
+	kvfree(sig);
+	key_put(ima_keyring);
+	return err;
+}
+EXPORT_SYMBOL_GPL(bpf_prog_appraise_against_ima);
+
+int bpf_check_signing_key_blacklist(struct bpf_prog *prog)
+{
+	if (!prog->aux->is_signed_ima)
+		return 0;
+
+	return is_hash_blacklisted(prog->aux->signing_key_tbs, 32,
+				   BLACKLIST_HASH_X509_TBS);
+}
+EXPORT_SYMBOL_GPL(bpf_check_signing_key_blacklist);
 
 /**
  * ima_inode_hash - return the stored measurement if the inode has been hashed
