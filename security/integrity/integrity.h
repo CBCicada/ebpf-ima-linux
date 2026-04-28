@@ -125,6 +125,8 @@ void __init integrity_fs_fini(void);
 #define INTEGRITY_KEYRING_MACHINE	3
 #define INTEGRITY_KEYRING_MAX		4
 
+struct key *integrity_keyring_from_id(const unsigned int id);
+
 extern struct dentry *integrity_dir;
 
 struct modsig;

@@ -897,9 +897,11 @@ int bpf_prog_appraise_against_ima(struct bpf_prog *prog,
 	if (!attr->signature || attr->signature_size == 0)
 		return 0;
 
-	ima_keyring = request_key(&key_type_keyring, ".ima", NULL);
+
+	ima_keyring = integrity_keyring_from_id(INTEGRITY_KEYRING_IMA);
 	if (IS_ERR(ima_keyring))
 		return PTR_ERR(ima_keyring);
+	__key_get(ima_keyring);
 
 	usig = make_bpfptr(attr->signature, is_kernel);
 	sig = kvmemdup_bpfptr(usig, attr->signature_size);
