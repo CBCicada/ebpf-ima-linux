@@ -778,8 +778,6 @@ static int bpf_process_measurement(struct bpf_prog *prog, char *id, int pcr)
 	struct ima_digest_data *hash_hdr = container_of(&hash.hdr,
 						struct ima_digest_data, hdr);
 	int violation = 0;
-	int digest_hash_len = hash_digest_size[ima_hash_algo];
-	struct bpf_insn *insn = prog->insnsi;
 
 	template = ima_template_desc_bpf();
 	if (!template) {
@@ -787,16 +785,11 @@ static int bpf_process_measurement(struct bpf_prog *prog, char *id, int pcr)
 		audit_cause = "ima_template_desc_bpf";
 		goto err_out;
 	}
-	
-	iint.ima_hash = hash_hdr;
-	iint.ima_hash->algo = ima_hash_algo;
-	iint.ima_hash->length = digest_hash_len;
 
-	ret = ima_calc_buffer_hash(insn, bpf_prog_insn_size(prog), iint.ima_hash);
-	if (ret < 0) {
-		audit_cause = "hashing_error";
-		goto err_out;
-	}
+	iint.ima_hash = hash_hdr;
+	iint.ima_hash->algo = HASH_ALGO_SHA256;
+	iint.ima_hash->length = SHA256_DIGEST_SIZE;
+	memcpy(iint.ima_hash->digest, prog->digest, SHA256_DIGEST_SIZE);
 
 	// TODO (avery): For large programs, maybe consider rehashing?
 	
@@ -821,23 +814,9 @@ err_out:
 			    audit_cause, ret, 0, ret);
 	return ret;
 }
-/* Check the system .blacklist keyring for prog's hash. */
 int bpf_check_blacklist(struct bpf_prog *prog)
 {
-	struct ima_max_digest_data hash;
-	struct ima_digest_data *hdr = container_of(&hash.hdr,
-					struct ima_digest_data, hdr);
-	int ret;
-
-	hdr->algo = ima_hash_algo;
-	hdr->length = hash_digest_size[ima_hash_algo];
-
-	ret = ima_calc_buffer_hash(prog->insnsi,
-				   bpf_prog_insn_size(prog), hdr);
-	if (ret < 0)
-		return ret;
-
-	return is_binary_blacklisted(hdr->digest, hdr->length);
+	return is_binary_blacklisted(prog->digest, sizeof(prog->digest));
 }
 EXPORT_SYMBOL(bpf_check_blacklist);
 
