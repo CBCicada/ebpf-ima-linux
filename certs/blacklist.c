@@ -15,8 +15,10 @@
 #include <linux/err.h>
 #include <linux/seq_file.h>
 #include <linux/uidgid.h>
+#include <linux/verification.h>
 #include <keys/asymmetric-type.h>
 #include <keys/system_keyring.h>
+#include <crypto/pkcs7.h>
 #include "blacklist.h"
 
 /*
@@ -298,12 +300,26 @@ int is_key_on_revocation_list(struct pkcs7_message *pkcs7)
 }
 #endif
 
+int verify_pkcs7_signer_against_keyring(struct pkcs7_message *pkcs7,
+					struct key *trusted_keys)
+{
+	if (blacklist_keyring &&
+	    pkcs7_find_signer_in_keyring(pkcs7, blacklist_keyring) == 0)
+		return -EKEYREJECTED;
+
+	return pkcs7_find_signer_in_keyring(pkcs7, trusted_keys);
+}
+EXPORT_SYMBOL_GPL(verify_pkcs7_signer_against_keyring);
+
 static int restrict_link_for_blacklist(struct key *dest_keyring,
 		const struct key_type *type, const union key_payload *payload,
 		struct key *restrict_key)
 {
 	if (type == &key_type_blacklist)
 		return 0;
+	if (type == &key_type_asymmetric)
+		return restrict_link_by_builtin_trusted(dest_keyring, type,
+							payload, restrict_key);
 	return -EOPNOTSUPP;
 }
 

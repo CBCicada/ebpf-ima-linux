@@ -443,7 +443,7 @@ int ima_policy_show(struct seq_file *m, void *v);
 int ima_check_blacklist(struct ima_iint_cache *iint,
 			const struct modsig *modsig, int pcr);
 int bpf_check_blacklist(struct bpf_prog *prog);
-int bpf_check_signing_key_blacklist(struct bpf_prog *prog);
+int bpf_check_signing_key_revoked(struct bpf_prog *prog);
 int ima_appraise_measurement(enum ima_hooks func, struct ima_iint_cache *iint,
 			     struct file *file, const unsigned char *filename,
 			     struct evm_ima_xattr_data *xattr_value,

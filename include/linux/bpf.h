@@ -1743,7 +1743,8 @@ struct bpf_prog_aux {
 	};
 	struct bpf_stream stream[2];
 	bool is_signed_ima;
-	u8 signing_key_tbs[32]; /* sha256(TBSCertificate); valid iff is_signed_ima */
+	void *sig_blob; // signature blob, owned by this struct
+	u32 sig_blob_size;
 	struct list_head pin_list;
 	struct mutex pin_mutex;
 	#ifdef CONFIG_IMA
@@ -2298,7 +2299,8 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 struct bpf_run_ctx {
 	#ifdef CONFIG_IMA
 	bool is_signed_ima;
-	u8 signing_key_tbs[32];
+	void *sig_blob;
+	u32 sig_blob_size;
 	#endif
 };
 

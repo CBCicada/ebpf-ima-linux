@@ -3045,11 +3045,19 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 	}
 
 	#ifdef CONFIG_IMA
-	if(!attr->signature){
-		if(uattr.is_kernel && current->bpf_ctx) {
+	if (!attr->signature) {
+		if (uattr.is_kernel && current->bpf_ctx) {
 			prog->aux->is_signed_ima = current->bpf_ctx->is_signed_ima;
-			memcpy(prog->aux->signing_key_tbs,
-			       current->bpf_ctx->signing_key_tbs, 32);
+			if (current->bpf_ctx->sig_blob) {
+				prog->aux->sig_blob = kvmemdup(current->bpf_ctx->sig_blob,
+							       current->bpf_ctx->sig_blob_size,
+							       GFP_KERNEL);
+				if (!prog->aux->sig_blob) {
+					err = -ENOMEM;
+					goto free_prog;
+				}
+				prog->aux->sig_blob_size = current->bpf_ctx->sig_blob_size;
+			}
 		}
 	}
 	#endif
@@ -4738,7 +4746,8 @@ static int bpf_prog_test_run(const union bpf_attr *attr,
 
 	#ifdef CONFIG_IMA
 	run_ctx.is_signed_ima = prog->aux->is_signed_ima;
-	memcpy(run_ctx.signing_key_tbs, prog->aux->signing_key_tbs, 32);
+	run_ctx.sig_blob = prog->aux->sig_blob;
+	run_ctx.sig_blob_size = prog->aux->sig_blob_size;
 	old_ctx = bpf_set_run_ctx(&run_ctx);
 	#endif
 
@@ -6406,7 +6415,9 @@ int kern_sys_bpf(int cmd, union bpf_attr *attr, unsigned int size)
 		}
 
 		#ifdef CONFIG_IMA
-		run_ctx.run_ctx.is_signed_ima = 1; // kernel-loaded path: trusted by construction; signing_key_tbs left zero
+		run_ctx.run_ctx.is_signed_ima = prog->aux->is_signed_ima;
+		run_ctx.run_ctx.sig_blob = prog->aux->sig_blob;
+		run_ctx.run_ctx.sig_blob_size = prog->aux->sig_blob_size;
 		#endif
 
 		run_ctx.bpf_cookie = 0;

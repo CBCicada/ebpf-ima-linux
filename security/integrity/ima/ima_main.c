@@ -32,6 +32,7 @@
 #include <linux/key-type.h>
 #include <linux/verification.h>
 #include <keys/system_keyring.h>
+#include <crypto/pkcs7.h>
 
 #include "ima.h"
 
@@ -866,15 +867,23 @@ EXPORT_SYMBOL(bpf_check_blacklist);
 
 	// ebpf signing works as follows: a signed loader loads the actual program
 	// If a program is IMA_APPRAISE, then it must come from a signed bpf loader
-	if (action & IMA_APPRAISE){
-		int bl = bpf_check_blacklist(prog);
-		if (bl < 0) {
-			pr_warn("ima_bpf_check: prog %s (id=%u) rejected by blacklist (rc=%d)\n",
-				id, prog->aux->id, bl);
-			return bl;
-		}
-		if(!prog->aux->is_signed_ima)
+	if (action & IMA_APPRAISE) {
+		int blacklisted;
+
+		if (!prog->aux->is_signed_ima)
 			return -EACCES;
+
+		blacklisted = bpf_check_blacklist(prog);
+		if (blacklisted < 0) {
+			pr_warn("ima_bpf_check: prog %s (id=%u) rejected by blacklist (rc=%d)\n",
+				id, prog->aux->id, blacklisted);
+			return blacklisted;
+		}
+		if (bpf_check_signing_key_revoked(prog)) {
+			pr_warn("ima_bpf_check: prog %s (id=%u) signing key revoked\n",
+				id, prog->aux->id);
+			return -EKEYREJECTED;
+		}
 	}
 
 	// decision: only measure the programs that are not blocked
@@ -886,54 +895,60 @@ EXPORT_SYMBOL(bpf_check_blacklist);
  }
 EXPORT_SYMBOL(ima_bpf_check);
 
+int bpf_check_signing_key_revoked(struct bpf_prog *prog)
+{
+	struct pkcs7_message *pkcs7;
+	struct key *ima_keyring;
+	int err;
+
+	if (!prog->aux->sig_blob)
+		return -ENOKEY;
+
+	pkcs7 = pkcs7_parse_message(prog->aux->sig_blob,
+				    prog->aux->sig_blob_size);
+	if (IS_ERR(pkcs7))
+		return PTR_ERR(pkcs7);
+
+	ima_keyring = integrity_keyring_from_id(INTEGRITY_KEYRING_IMA);
+	if (IS_ERR(ima_keyring))
+		err = PTR_ERR(ima_keyring);
+	else
+		err = verify_pkcs7_signer_against_keyring(pkcs7, ima_keyring);
+
+	pkcs7_free_message(pkcs7);
+	return err;
+}
+EXPORT_SYMBOL_GPL(bpf_check_signing_key_revoked);
+
 int bpf_prog_appraise_against_ima(struct bpf_prog *prog,
 				  union bpf_attr *attr, bool is_kernel)
 {
 	bpfptr_t usig;
-	struct key *ima_keyring;
 	void *sig;
 	int err;
 
 	if (!attr->signature || attr->signature_size == 0)
 		return 0;
 
-
-	ima_keyring = integrity_keyring_from_id(INTEGRITY_KEYRING_IMA);
-	if (IS_ERR(ima_keyring))
-		return PTR_ERR(ima_keyring);
-	__key_get(ima_keyring);
-
 	usig = make_bpfptr(attr->signature, is_kernel);
 	sig = kvmemdup_bpfptr(usig, attr->signature_size);
-	if (IS_ERR(sig)) {
-		key_put(ima_keyring);
+	if (IS_ERR(sig))
 		return PTR_ERR(sig);
+
+	prog->aux->sig_blob = sig;
+	prog->aux->sig_blob_size = attr->signature_size;
+
+	err = bpf_check_signing_key_revoked(prog);
+	if (err) {
+		kvfree(sig);
+		prog->aux->sig_blob = NULL;
+		prog->aux->sig_blob_size = 0;
+		return err;
 	}
-
-	err = verify_pkcs7_signature_get_signer_tbs(
-		prog->insnsi, prog->len * sizeof(struct bpf_insn),
-		sig, attr->signature_size,
-		ima_keyring, VERIFYING_BPF_SIGNATURE,
-		NULL, NULL,
-		prog->aux->signing_key_tbs);
-	if (err == 0)
-		prog->aux->is_signed_ima = true;
-
-	kvfree(sig);
-	key_put(ima_keyring);
-	return err;
+	prog->aux->is_signed_ima = true;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(bpf_prog_appraise_against_ima);
-
-int bpf_check_signing_key_blacklist(struct bpf_prog *prog)
-{
-	if (!prog->aux->is_signed_ima)
-		return 0;
-
-	return is_hash_blacklisted(prog->aux->signing_key_tbs, 32,
-				   BLACKLIST_HASH_X509_TBS);
-}
-EXPORT_SYMBOL_GPL(bpf_check_signing_key_blacklist);
 
 /**
  * ima_inode_hash - return the stored measurement if the inode has been hashed

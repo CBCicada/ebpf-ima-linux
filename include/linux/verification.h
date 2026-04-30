@@ -62,17 +62,8 @@ extern int verify_pkcs7_message_sig(const void *data, size_t len,
 							size_t asn1hdrlen),
 				    void *ctx);
 
-extern int pkcs7_get_signer_tbs_sha256(struct pkcs7_message *pkcs7, u8 *out_tbs);
-
-extern int verify_pkcs7_signature_get_signer_tbs(const void *data, size_t len,
-						 const void *raw_pkcs7, size_t pkcs7_len,
-						 struct key *trusted_keys,
-						 enum key_being_used_for usage,
-						 int (*view_content)(void *ctx,
-								     const void *data, size_t len,
-								     size_t asn1hdrlen),
-						 void *ctx,
-						 u8 *out_tbs);
+extern int verify_pkcs7_signer_against_keyring(struct pkcs7_message *pkcs7,
+					       struct key *trusted_keys);
 
 #ifdef CONFIG_SIGNED_PE_FILE_VERIFICATION
 extern int verify_pefile_signature(const void *pebuf, unsigned pelen,

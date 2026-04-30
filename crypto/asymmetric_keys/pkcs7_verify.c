@@ -14,7 +14,6 @@
 #include <crypto/hash.h>
 #include <crypto/hash_info.h>
 #include <crypto/public_key.h>
-#include <crypto/sha2.h>
 #include "pkcs7_parser.h"
 
 /*
@@ -488,17 +487,3 @@ int pkcs7_supply_detached_data(struct pkcs7_message *pkcs7,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(pkcs7_supply_detached_data);
-
-int pkcs7_get_signer_tbs_sha256(struct pkcs7_message *pkcs7, u8 *out_tbs)
-{
-	struct pkcs7_signed_info *sinfo;
-
-	for (sinfo = pkcs7->signed_infos; sinfo; sinfo = sinfo->next) {
-		if (!sinfo->signer || !sinfo->signer->verified)
-			continue;
-		sha256(sinfo->signer->tbs, sinfo->signer->tbs_size, out_tbs);
-		return 0;
-	}
-	return -ENOKEY;
-}
-EXPORT_SYMBOL_GPL(pkcs7_get_signer_tbs_sha256);

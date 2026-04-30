@@ -32,6 +32,9 @@ extern int pkcs7_get_content_data(const struct pkcs7_message *pkcs7,
 extern int pkcs7_validate_trust(struct pkcs7_message *pkcs7,
 				struct key *trust_keyring);
 
+extern int pkcs7_find_signer_in_keyring(struct pkcs7_message *pkcs7,
+					struct key *keyring);
+
 /*
  * pkcs7_verify.c
  */

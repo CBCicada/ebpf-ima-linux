@@ -186,3 +186,26 @@ int pkcs7_validate_trust(struct pkcs7_message *pkcs7,
 	return cached_ret;
 }
 EXPORT_SYMBOL_GPL(pkcs7_validate_trust);
+
+
+int pkcs7_find_signer_in_keyring(struct pkcs7_message *pkcs7,
+				 struct key *keyring)
+{
+	struct pkcs7_signed_info *sinfo = pkcs7->signed_infos;
+	struct key *key;
+
+	if (!sinfo || !sinfo->sig)
+		return -ENODATA;
+	if (!sinfo->sig->auth_ids[0] && !sinfo->sig->auth_ids[1])
+		return -ENOKEY;
+
+	key = find_asymmetric_key(keyring,
+				  sinfo->sig->auth_ids[0],
+				  sinfo->sig->auth_ids[1],
+				  NULL, false);
+	if (IS_ERR(key))
+		return PTR_ERR(key);
+	key_put(key);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(pkcs7_find_signer_in_keyring);
