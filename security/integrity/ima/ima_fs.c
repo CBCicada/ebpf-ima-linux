@@ -607,11 +607,25 @@ static ssize_t ima_trigger_reappraisal_ebpf(struct file *file, const char __user
 		if (action & IMA_APPRAISE) {
 			int blacklisted = bpf_check_blacklist(prog);
 			int revoked     = bpf_check_signing_key_revoked(prog);
+			int link_ret;
 			if (blacklisted == 0 && revoked == 0 && prog->aux->is_signed_ima)
 				goto next;
 
-			ret = bpf_prog_purge_link(prog, signal, timeout_ms,
-						  force);
+			ret = 0;
+			if (is_cgroup_prog_type(prog->type, prog->expected_attach_type, true)) {
+				ret = bpf_prog_purge_cgroup_attachments(prog, timeout_ms);
+				if (ret)
+					pr_warn("ima_reappraise: cgroup purge failed for prog id=%u: %d\n",
+						prog->aux->id, ret);
+			}
+
+			link_ret = bpf_prog_purge_link(prog, signal, timeout_ms,
+						       force);
+			if (link_ret && link_ret != -EINPROGRESS) {
+				pr_warn("ima_reappraise: link purge failed for prog id=%u: %d\n",
+					prog->aux->id, link_ret);
+				ret = link_ret;
+			}
 			if (ret && ret != -EINPROGRESS)
 				integrity_audit_msg(AUDIT_INTEGRITY_RULE,
 						    NULL, prog->aux->name,

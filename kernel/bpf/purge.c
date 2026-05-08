@@ -13,6 +13,14 @@
 #include <linux/file.h>
 #include <linux/task_work.h>
 #include <linux/completion.h>
+#include <linux/cgroup.h>
+#include <linux/bpf-cgroup.h>
+#include <linux/delay.h>
+
+struct cgroup_victim_lst {
+	struct cgroup *cgrp;
+	struct list_head node;
+};
 
 struct bpf_purge_fd {
 	struct list_head	node;
@@ -247,3 +255,77 @@ int bpf_prog_purge_link(struct bpf_prog *prog, int signal, unsigned long timeout
 	return ret;
 }
 EXPORT_SYMBOL_GPL(bpf_prog_purge_link);
+
+int bpf_prog_purge_cgroup_attachments(struct bpf_prog *prog,
+				      unsigned long timeout_ms)
+{
+	struct cgroup_subsys_state *css;
+	struct cgroup *cgrp;
+	struct cgroup_victim_lst *v, *vtmp;
+	LIST_HEAD(victims);
+	int atype;
+	int ret = 0;
+
+	bpf_prog_condemn(prog);
+
+	cgroup_lock();
+	css_for_each_descendant_pre(css, &cgrp_dfl_root.cgrp.self) {
+		bool match = false;
+
+		if (!(css->flags & CSS_ONLINE))
+			continue;
+		cgrp = container_of(css, struct cgroup, self);
+		for (atype = 0; atype < MAX_CGROUP_BPF_ATTACH_TYPE && !match; atype++) {
+			struct bpf_prog_list *pl;
+
+			hlist_for_each_entry(pl, &cgrp->bpf.progs[atype], node) {
+				if (pl->prog == prog && !pl->link) {
+					match = true;
+					break;
+				}
+			}
+		}
+		if (match) {
+			v = kmalloc(sizeof(*v), GFP_KERNEL);
+			if (!v) {
+				ret = -ENOMEM;
+				goto unlock_collect;
+			}
+			v->cgrp = cgrp;
+			cgroup_get(cgrp);
+			list_add(&v->node, &victims);
+		}
+	}
+unlock_collect:
+	cgroup_unlock();
+
+	unsigned long deadline = jiffies + msecs_to_jiffies(timeout_ms);
+
+	list_for_each_entry_safe(v, vtmp, &victims, node) {
+		int err;
+
+		do {
+			cgroup_lock();
+			cgroup_kill(v->cgrp->dom_cgrp);
+			cgroup_unlock();
+
+			// no existing mechanism for waiting in kernel land, so we just poll
+			while (cgroup_is_populated(v->cgrp)) {
+				if (time_after(jiffies, deadline))
+					break;
+				msleep(20);
+			}
+
+			err = cgroup_rmdir(v->cgrp->kn);
+		} while (err == -EBUSY && !time_after(jiffies, deadline));
+
+		if (err)
+			ret = err;
+
+		list_del(&v->node);
+		cgroup_put(v->cgrp);
+		kfree(v);
+	}
+
+	return ret;
+}

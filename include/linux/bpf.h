@@ -2556,6 +2556,10 @@ struct bpf_prog *bpf_prog_get_curr_or_next(u32 *id);
 
 int bpf_prog_purge_link(struct bpf_prog *prog, int signal, unsigned long timeout_ms,
 			bool force);
+int bpf_prog_purge_cgroup_attachments(struct bpf_prog *prog,
+				      unsigned long timeout_ms);
+bool is_cgroup_prog_type(enum bpf_prog_type ptype, enum bpf_attach_type atype,
+			 bool check_atype);
 bool bpf_file_references_prog(struct file *file, struct bpf_prog *prog);
 void bpf_unpin_prog(struct bpf_prog *prog);
 

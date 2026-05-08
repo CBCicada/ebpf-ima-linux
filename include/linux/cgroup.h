@@ -104,6 +104,8 @@ extern struct blocking_notifier_head cgroup_lifetime_notifier;
 	static_branch_likely(&ss ## _on_dfl_key)
 
 bool css_has_online_children(struct cgroup_subsys_state *css);
+int cgroup_rmdir(struct kernfs_node *kn);
+void cgroup_kill(struct cgroup *cgrp);
 struct cgroup_subsys_state *css_from_id(int id, struct cgroup_subsys *ss);
 struct cgroup_subsys_state *cgroup_e_css(struct cgroup *cgroup,
 					 struct cgroup_subsys *ss);

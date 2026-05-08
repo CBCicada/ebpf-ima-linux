@@ -4482,8 +4482,8 @@ static int bpf_prog_attach_check_attach_type(const struct bpf_prog *prog,
 	}
 }
 
-static bool is_cgroup_prog_type(enum bpf_prog_type ptype, enum bpf_attach_type atype,
-				bool check_atype)
+bool is_cgroup_prog_type(enum bpf_prog_type ptype, enum bpf_attach_type atype,
+			 bool check_atype)
 {
 	switch (ptype) {
 	case BPF_PROG_TYPE_CGROUP_DEVICE:
@@ -4522,16 +4522,16 @@ static int bpf_prog_attach(const union bpf_attr *attr)
 	struct bpf_prog *prog;
 	int ret;
 
-	// IMA appraisal cannot allow direct attachments, as those programs cannot be reappraised.
-	if(is_ima_appraise_enabled())
-		return -EPERM;
-
 	if (CHECK_ATTR(BPF_PROG_ATTACH))
 		return -EINVAL;
 
 	ptype = attach_type_to_prog_type(attr->attach_type);
 	if (ptype == BPF_PROG_TYPE_UNSPEC)
 		return -EINVAL;
+
+	if (is_ima_appraise_enabled() &&
+	    !is_cgroup_prog_type(ptype, attr->attach_type, true))
+		return -EPERM;
 	if (bpf_mprog_supported(ptype)) {
 		if (attr->attach_flags & ~BPF_F_ATTACH_MASK_MPROG)
 			return -EINVAL;

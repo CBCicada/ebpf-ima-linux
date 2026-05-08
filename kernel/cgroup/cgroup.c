@@ -4204,7 +4204,7 @@ static void __cgroup_kill(struct cgroup *cgrp)
 	css_task_iter_end(&it);
 }
 
-static void cgroup_kill(struct cgroup *cgrp)
+void cgroup_kill(struct cgroup *cgrp)
 {
 	struct cgroup_subsys_state *css;
 	struct cgroup *dsct;
