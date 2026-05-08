@@ -280,7 +280,7 @@ static int cgroup_apply_control(struct cgroup *cgrp);
 static void cgroup_finalize_control(struct cgroup *cgrp, int ret);
 static void css_task_iter_skip(struct css_task_iter *it,
 			       struct task_struct *task);
-static int cgroup_destroy_locked(struct cgroup *cgrp);
+int cgroup_destroy_locked(struct cgroup *cgrp);
 static struct cgroup_subsys_state *css_create(struct cgroup *cgrp,
 					      struct cgroup_subsys *ss);
 static void css_release(struct percpu_ref *ref);
@@ -6146,7 +6146,7 @@ static void kill_css(struct cgroup_subsys_state *css)
  * created.  As cgroup doesn't care about the names internally, this
  * doesn't cause any problem.
  */
-static int cgroup_destroy_locked(struct cgroup *cgrp)
+int cgroup_destroy_locked(struct cgroup *cgrp)
 	__releases(&cgroup_mutex) __acquires(&cgroup_mutex)
 {
 	struct cgroup *tcgrp, *parent = cgroup_parent(cgrp);

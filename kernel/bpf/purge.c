@@ -316,7 +316,12 @@ unlock_collect:
 				msleep(20);
 			}
 
-			err = cgroup_rmdir(v->cgrp->kn);
+			cgroup_lock();
+			if (!(v->cgrp->self.flags & CSS_ONLINE))
+				err = 0;
+			else
+				err = cgroup_destroy_locked(v->cgrp);
+			cgroup_unlock();
 		} while (err == -EBUSY && !time_after(jiffies, deadline));
 
 		if (err)
