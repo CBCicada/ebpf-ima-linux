@@ -5995,6 +5995,51 @@ again:
 }
 EXPORT_SYMBOL_GPL(bpf_link_get_curr_or_next);
 
+
+void bpf_link_purge_for_prog(struct bpf_prog *target)
+{
+	struct bpf_link **batch;
+	struct bpf_link *link;
+	unsigned int id;
+	int capacity = 0, count = 0, i;
+
+	// count under lock
+	spin_lock_bh(&link_idr_lock);
+	idr_for_each_entry(&link_idr, link, id) {
+		if (link->id != 0 && link->prog == target)
+			capacity++;
+	}
+	spin_unlock_bh(&link_idr_lock);
+
+	if (!capacity)
+		return;
+
+	batch = kmalloc_array(capacity, sizeof(*batch), GFP_KERNEL);
+	if (!batch)
+		return;
+
+	// collect the refs
+	spin_lock_bh(&link_idr_lock);
+	idr_for_each_entry(&link_idr, link, id) {
+		if (count == capacity)
+			break;
+		if (link->id == 0 || link->prog != target)
+			continue;
+		if (atomic64_fetch_add_unless(&link->refcnt, 1, 0) == 0)
+			continue;
+		batch[count++] = link;
+	}
+	spin_unlock_bh(&link_idr_lock);
+
+	for (i = 0; i < count; i++) {
+		if (batch[i]->ops->detach)
+			batch[i]->ops->detach(batch[i]);
+		bpf_link_put_direct(batch[i]);
+	}
+
+	kfree(batch);
+}
+
 #define BPF_LINK_GET_FD_BY_ID_LAST_FIELD link_id
 
 static int bpf_link_get_fd_by_id(const union bpf_attr *attr)

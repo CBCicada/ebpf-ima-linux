@@ -35,6 +35,13 @@ struct bpf_purge_ctx {
 	atomic_t		refcnt;		/* ctx lifetime */
 	struct list_head	work_list;	/* pending bpf_purge_work entries */
 	spinlock_t		work_lock;
+	struct list_head	signaled_pids;	/* dedup set: tasks to signal */
+	spinlock_t		signaled_lock;
+};
+
+struct purge_signaled_pid {
+	struct list_head	node;
+	struct pid		*pid;
 };
 
 struct bpf_purge_work {
@@ -45,9 +52,18 @@ struct bpf_purge_work {
 	struct list_head	fd_list;	/* list of bpf_purge_fd */
 };
 
+static void bpf_purge_ctx_track_pid(struct bpf_purge_ctx *ctx, struct pid *pid);
+
 static void purge_ctx_put(struct bpf_purge_ctx *ctx)
 {
 	if (atomic_dec_and_test(&ctx->refcnt)) {
+		struct purge_signaled_pid *sp, *tmp;
+
+		list_for_each_entry_safe(sp, tmp, &ctx->signaled_pids, node) {
+			list_del(&sp->node);
+			put_pid(sp->pid);
+			kfree(sp);
+		}
 		bpf_prog_put(ctx->target);
 		kfree(ctx);
 	}
@@ -75,9 +91,6 @@ static void purge_fd_callback(struct callback_head *cb)
 		list_del(&pfd->node);
 		kfree(pfd);
 	}
-
-	if (ctx->signal)
-		send_sig(ctx->signal, current, 1);
 
 	spin_lock(&ctx->work_lock);
 	list_del(&work->node);
@@ -162,6 +175,8 @@ static int queue_fd_close_work(struct bpf_prog *target,
 		list_add_tail(&work->node, &ctx->work_list);
 		spin_unlock(&ctx->work_lock);
 
+		bpf_purge_ctx_track_pid(ctx, task_tgid(task));
+
 		atomic_inc(&ctx->pending);
 		atomic_inc(&ctx->refcnt);
 		queued++;
@@ -204,6 +219,43 @@ static void purge_tail_call_maps(struct bpf_prog *target)
 	}
 }
 
+// add tgid to ctx's signal-once set; safe from atomic context (GFP_ATOMIC)
+static void bpf_purge_ctx_track_pid(struct bpf_purge_ctx *ctx, struct pid *pid)
+{
+	struct purge_signaled_pid *sp, *new;
+
+	if (!ctx || !pid)
+		return;
+
+	new = kmalloc(sizeof(*new), GFP_ATOMIC);
+	if (!new)
+		return;
+
+	spin_lock(&ctx->signaled_lock);
+	list_for_each_entry(sp, &ctx->signaled_pids, node) {
+		if (sp->pid == pid) {
+			spin_unlock(&ctx->signaled_lock);
+			kfree(new);
+			return;
+		}
+	}
+	new->pid = get_pid(pid);
+	list_add(&new->node, &ctx->signaled_pids);
+	spin_unlock(&ctx->signaled_lock);
+}
+
+// deliver signal once per unique tracked tgid
+static void deliver_tracked_signals(struct bpf_purge_ctx *ctx, int signal)
+{
+	struct purge_signaled_pid *sp;
+
+	spin_lock(&ctx->signaled_lock);
+	list_for_each_entry(sp, &ctx->signaled_pids, node) {
+		kill_pid_info(signal, SEND_SIG_PRIV, sp->pid);
+	}
+	spin_unlock(&ctx->signaled_lock);
+}
+
 int bpf_prog_purge_link(struct bpf_prog *prog, int signal, unsigned long timeout_ms,
 			bool force)
 {
@@ -227,8 +279,12 @@ int bpf_prog_purge_link(struct bpf_prog *prog, int signal, unsigned long timeout
 	atomic_set(&ctx->pending, 1);
 	INIT_LIST_HEAD(&ctx->work_list);
 	spin_lock_init(&ctx->work_lock);
+	INIT_LIST_HEAD(&ctx->signaled_pids);
+	spin_lock_init(&ctx->signaled_lock);
 
 	queued = queue_fd_close_work(prog, ctx);
+	bpf_link_purge_for_prog(prog);
+	deliver_tracked_signals(ctx, signal);
 
 	if (atomic_dec_and_test(&ctx->pending))
 		complete(&ctx->done);

@@ -2690,6 +2690,7 @@ void bpf_link_put(struct bpf_link *link);
 int bpf_link_new_fd(struct bpf_link *link);
 struct bpf_link *bpf_link_get_from_fd(u32 ufd);
 struct bpf_link *bpf_link_get_curr_or_next(u32 *id);
+void bpf_link_purge_for_prog(struct bpf_prog *target);
 
 void bpf_token_inc(struct bpf_token *token);
 void bpf_token_put(struct bpf_token *token);
