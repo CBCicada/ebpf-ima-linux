@@ -849,6 +849,39 @@ static int bpf_unlink(struct inode *dir, struct dentry *dentry)
 	return simple_unlink(dir, dentry);
 }
 
+// move pin_nodes for `link` from old_prog->pin_list to new_prog->pin_list
+// covers BPF_LINK_UPDATE which swaps link->prog without touching pin tracking
+void bpf_pin_rehome_for_link(struct bpf_link *link, struct bpf_prog *old_prog,
+			     struct bpf_prog *new_prog)
+{
+	struct bpf_pin_node *node, *tmp;
+	struct mutex *first_lock, *second_lock;
+
+	if (!link || !old_prog || !new_prog || old_prog == new_prog)
+		return;
+
+	if (old_prog < new_prog) {
+		first_lock = &old_prog->aux->pin_mutex;
+		second_lock = &new_prog->aux->pin_mutex;
+	} else {
+		first_lock = &new_prog->aux->pin_mutex;
+		second_lock = &old_prog->aux->pin_mutex;
+	}
+
+	mutex_lock(first_lock);
+	mutex_lock_nested(second_lock, SINGLE_DEPTH_NESTING);
+
+	list_for_each_entry_safe(node, tmp, &old_prog->aux->pin_list, list) {
+		struct inode *inode = d_inode(node->dentry);
+
+		if (inode && inode->i_private == link)
+			list_move(&node->list, &new_prog->aux->pin_list);
+	}
+
+	mutex_unlock(second_lock);
+	mutex_unlock(first_lock);
+}
+
 void bpf_unpin_prog(struct bpf_prog *prog)
 {
 	struct bpf_pin_node *node, *tmp;

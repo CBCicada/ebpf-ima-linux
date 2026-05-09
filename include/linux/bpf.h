@@ -2562,6 +2562,8 @@ bool is_cgroup_prog_type(enum bpf_prog_type ptype, enum bpf_attach_type atype,
 			 bool check_atype);
 bool bpf_file_references_prog(struct file *file, struct bpf_prog *prog);
 void bpf_unpin_prog(struct bpf_prog *prog);
+void bpf_pin_rehome_for_link(struct bpf_link *link, struct bpf_prog *old_prog,
+			     struct bpf_prog *new_prog);
 
 #ifdef CONFIG_IMA
 static inline bool bpf_prog_is_condemned(const struct bpf_prog *prog)

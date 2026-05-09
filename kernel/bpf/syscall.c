@@ -5907,10 +5907,15 @@ static int link_update(union bpf_attr *attr)
 		goto out_put_progs;
 	}
 
-	if (link->ops->update_prog)
+	if (link->ops->update_prog) {
+		struct bpf_prog *prev_prog = link->prog;
+
 		ret = link->ops->update_prog(link, new_prog, old_prog);
-	else
+		if (!ret)
+			bpf_pin_rehome_for_link(link, prev_prog, new_prog);
+	} else {
 		ret = -EINVAL;
+	}
 
 out_put_progs:
 	if (old_prog)
