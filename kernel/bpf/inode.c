@@ -909,6 +909,37 @@ void bpf_unpin_prog(struct bpf_prog *prog)
 	}
 }
 
+static void bpf_unpin_sb(struct super_block *sb)
+{
+	struct bpf_pin_node *node, *tmp;
+	struct bpf_prog *prog;
+	u32 id = 0;
+
+	while ((prog = bpf_prog_get_curr_or_next(&id)) != NULL) {
+		LIST_HEAD(to_put);
+
+		mutex_lock(&prog->aux->pin_mutex);
+		list_for_each_entry_safe(node, tmp, &prog->aux->pin_list, list) {
+			if (node->dentry->d_sb == sb) {
+				list_del(&node->list);
+				list_add(&node->list, &to_put);
+			}
+		}
+		mutex_unlock(&prog->aux->pin_mutex);
+
+		list_for_each_entry_safe(node, tmp, &to_put, list) {
+			struct dentry *dentry = node->dentry;
+
+			list_del(&node->list);
+			dput(dentry);
+			kfree(node);
+		}
+
+		id++;
+		bpf_prog_put(prog);
+	}
+}
+
 static void bpf_destroy_inode(struct inode *inode)
 {
 	enum bpf_type type;
@@ -1214,6 +1245,7 @@ static void bpf_kill_super(struct super_block *sb)
 {
 	struct bpf_mount_opts *opts = sb->s_fs_info;
 
+	bpf_unpin_sb(sb);
 	kill_anon_super(sb);
 	kfree(opts);
 }
