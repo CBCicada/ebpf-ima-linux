@@ -2432,7 +2432,7 @@ int ima_policy_show(struct seq_file *m, void *v)
 
 	if (entry->flags & IMA_EBPF_HOOKS) {
         seq_puts(m, "ebpf_hooks=");
-		seq_printf(m, entry->ebpf.hook);
+		seq_puts(m, entry->ebpf.hook);
 		seq_puts(m, " ");
     }
 	
