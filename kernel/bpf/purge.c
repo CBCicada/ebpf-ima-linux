@@ -113,59 +113,59 @@ static int queue_fd_close_work(struct bpf_prog *target,
 	rcu_read_lock();
 	for_each_process(task) {
 		struct bpf_purge_work *work = NULL;
-		struct files_struct *files;
-		struct fdtable *fdt;
-		unsigned int fd;
+		unsigned int fd = 0;
 		struct file *f;
 		struct bpf_purge_fd *pfd, *tmp;
 
-		files = task->files;
-		if (!files)
-			continue;
-
-		fdt = rcu_dereference(files->fdt);
-		for (fd = 0; fd < READ_ONCE(fdt->max_fds); fd++) {
-			f = rcu_dereference(fdt->fd[fd]);
-			if (!f)
-				continue;
-
+		get_task_struct(task);
+		while ((f = fget_task_next(task, &fd))) {
 			if (!bpf_file_references_prog(f, target))
-				continue;
+				goto next_file;
 
 			if (!work) {
 
 				work = kmalloc(sizeof(*work), GFP_ATOMIC);
-				if (!work){
+				if (!work) {
 					pr_err("bpf_prog_purge: failed to allocate work for task %d\n",
 						task->pid);
-					break;
+					goto next_file;
 				}
 				INIT_LIST_HEAD(&work->fd_list);
 			}
 
 			pfd = kmalloc(sizeof(*pfd), GFP_ATOMIC);
-			if (!pfd){
+			if (!pfd) {
 				pr_err("bpf_prog_purge: failed to allocate fd for task %d\n",
 					task->pid);
-				continue;
+				goto next_file;
 			}
 			pfd->fd = fd;
 			list_add_tail(&pfd->node, &work->fd_list);
+
+next_file:
+			fput(f);
+			fd++;
 		}
 
 		if (!work) {
+			put_task_struct(task);
+			continue;
+		}
+		if (list_empty(&work->fd_list)) {
+			put_task_struct(task);
 			kfree(work);
 			continue;
 		}
 
-		get_task_struct(task);
 		work->task = task;
 		work->ctx = ctx;
 
 		init_task_work(&work->twork, purge_fd_callback);
 		if (task_work_add(task, &work->twork, TWA_SIGNAL)) {
-			list_for_each_entry_safe(pfd, tmp, &work->fd_list, node)
+			list_for_each_entry_safe(pfd, tmp, &work->fd_list, node) {
+				list_del(&pfd->node);
 				kfree(pfd);
+			}
 			put_task_struct(task);
 			kfree(work);
 			continue;
@@ -305,7 +305,9 @@ int bpf_prog_purge_link(struct bpf_prog *prog, int signal, unsigned long timeout
 		}
 	}
 
-	ret = left > 0 ? -EINPROGRESS : 0;
+	ret = 0;
+	if (queued > 0 && timeout_ms > 0 && !left)
+		ret = -EINPROGRESS;
 
 	purge_ctx_put(ctx);
 	return ret;
