@@ -77,7 +77,7 @@ static void purge_fd_callback(struct callback_head *cb)
 	struct bpf_purge_fd *pfd, *tmp;
 
 	list_for_each_entry_safe(pfd, tmp, &work->fd_list, node) {
-		struct file *f = fget(pfd->fd);
+		struct file *f = fget_task(current, pfd->fd);
 
 		if (f) {
 			// in case the process itself closes at the exact right time and reopens something else
@@ -159,9 +159,23 @@ next_file:
 
 		work->task = task;
 		work->ctx = ctx;
-
 		init_task_work(&work->twork, purge_fd_callback);
+
+		spin_lock(&ctx->work_lock);
+		list_add_tail(&work->node, &ctx->work_list);
+		spin_unlock(&ctx->work_lock);
+
+		atomic_inc(&ctx->pending);
+		atomic_inc(&ctx->refcnt);
+
 		if (task_work_add(task, &work->twork, TWA_SIGNAL)) {
+			spin_lock(&ctx->work_lock);
+			list_del(&work->node);
+			spin_unlock(&ctx->work_lock);
+
+			atomic_dec(&ctx->pending);
+			purge_ctx_put(ctx);
+
 			list_for_each_entry_safe(pfd, tmp, &work->fd_list, node) {
 				list_del(&pfd->node);
 				kfree(pfd);
@@ -171,14 +185,7 @@ next_file:
 			continue;
 		}
 
-		spin_lock(&ctx->work_lock);
-		list_add_tail(&work->node, &ctx->work_list);
-		spin_unlock(&ctx->work_lock);
-
 		bpf_purge_ctx_track_pid(ctx, task_tgid(task));
-
-		atomic_inc(&ctx->pending);
-		atomic_inc(&ctx->refcnt);
 		queued++;
 	}
 	rcu_read_unlock();
