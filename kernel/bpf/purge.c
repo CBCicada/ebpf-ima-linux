@@ -80,7 +80,6 @@ static void purge_fd_callback(struct callback_head *cb)
 		struct file *f = fget_task(current, pfd->fd);
 
 		if (f) {
-			// in case the process itself closes at the exact right time and reopens something else
 			if (bpf_file_references_prog(f, ctx->target)) {
 				fput(f);
 				close_fd(pfd->fd);
@@ -123,11 +122,10 @@ static int queue_fd_close_work(struct bpf_prog *target,
 				goto next_file;
 
 			if (!work) {
-
 				work = kmalloc(sizeof(*work), GFP_ATOMIC);
 				if (!work) {
 					pr_err("bpf_prog_purge: failed to allocate work for task %d\n",
-						task->pid);
+					       task->pid);
 					goto next_file;
 				}
 				INIT_LIST_HEAD(&work->fd_list);
@@ -136,7 +134,7 @@ static int queue_fd_close_work(struct bpf_prog *target,
 			pfd = kmalloc(sizeof(*pfd), GFP_ATOMIC);
 			if (!pfd) {
 				pr_err("bpf_prog_purge: failed to allocate fd for task %d\n",
-					task->pid);
+				       task->pid);
 				goto next_file;
 			}
 			pfd->fd = fd;
@@ -215,7 +213,6 @@ static void purge_tail_call_maps(struct bpf_prog *target)
 		if (map->map_type == BPF_MAP_TYPE_PROG_ARRAY) {
 			array = container_of(map, struct bpf_array, map);
 			for (i = 0; i < array->map.max_entries; i++) {
-
 				old = cmpxchg(array->ptrs + i, target, NULL);
 				if (old == target)
 					bpf_prog_put(target);
@@ -226,7 +223,6 @@ static void purge_tail_call_maps(struct bpf_prog *target)
 	}
 }
 
-// add tgid to ctx's signal-once set; safe from atomic context (GFP_ATOMIC)
 static void bpf_purge_ctx_track_pid(struct bpf_purge_ctx *ctx, struct pid *pid)
 {
 	struct purge_signaled_pid *sp, *new;
@@ -251,7 +247,6 @@ static void bpf_purge_ctx_track_pid(struct bpf_purge_ctx *ctx, struct pid *pid)
 	spin_unlock(&ctx->signaled_lock);
 }
 
-// deliver signal once per unique tracked tgid
 static void deliver_tracked_signals(struct bpf_purge_ctx *ctx, int signal)
 {
 	struct purge_signaled_pid *sp;
@@ -297,9 +292,8 @@ int bpf_prog_purge_link(struct bpf_prog *prog, int signal, unsigned long timeout
 		complete(&ctx->done);
 
 	if (queued > 0 && timeout_ms > 0) {
-
 		left = wait_for_completion_timeout(&ctx->done,
-					msecs_to_jiffies(timeout_ms));
+					   msecs_to_jiffies(timeout_ms));
 		pr_info("bpf_prog_purge[id=%u]: queued=%d wait_left_jiffies=%lu\n",
 			prog->aux->id, queued, left);
 
@@ -340,10 +334,12 @@ int bpf_prog_purge_cgroup_attachments(struct bpf_prog *prog,
 		if (!(css->flags & CSS_ONLINE))
 			continue;
 		cgrp = container_of(css, struct cgroup, self);
-		for (atype = 0; atype < MAX_CGROUP_BPF_ATTACH_TYPE && !match; atype++) {
+		for (atype = 0; atype < MAX_CGROUP_BPF_ATTACH_TYPE && !match;
+		     atype++) {
 			struct bpf_prog_list *pl;
 
-			hlist_for_each_entry(pl, &cgrp->bpf.progs[atype], node) {
+			hlist_for_each_entry(pl, &cgrp->bpf.progs[atype],
+					     node) {
 				if (pl->prog == prog && !pl->link) {
 					match = true;
 					break;
@@ -374,7 +370,6 @@ unlock_collect:
 			cgroup_kill(v->cgrp->dom_cgrp);
 			cgroup_unlock();
 
-			// no existing mechanism for waiting in kernel land, so we just poll
 			while (cgroup_is_populated(v->cgrp)) {
 				if (time_after(jiffies, deadline))
 					break;

@@ -1747,9 +1747,9 @@ struct bpf_prog_aux {
 	u32 sig_blob_size;
 	struct list_head pin_list;
 	struct mutex pin_mutex;
-	#ifdef CONFIG_IMA
+#ifdef CONFIG_IMA
 	bool condemned;
-	#endif
+#endif
 };
 
 struct bpf_prog {
@@ -2297,11 +2297,11 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 			struct bpf_prog_array **new_array);
 
 struct bpf_run_ctx {
-	#ifdef CONFIG_IMA
+#ifdef CONFIG_IMA
 	bool is_signed_ima;
 	void *sig_blob;
 	u32 sig_blob_size;
-	#endif
+#endif
 };
 
 struct bpf_cg_run_ctx {
@@ -2574,10 +2574,6 @@ static inline bool bpf_prog_is_condemned(const struct bpf_prog *prog)
 static inline void bpf_prog_condemn(struct bpf_prog *prog)
 {
 	WRITE_ONCE(prog->aux->condemned, true);
-	/* Full barrier: after this returns, every CPU has observed
-	 * condemned=true.  No new references can be created from
-	 * this point forward.
-	 */
 	synchronize_rcu();
 }
 #else
@@ -3854,11 +3850,11 @@ struct bpf_key {
 #define BPF_ATTACH_TYPE_STRING_FN(x) "BPF_" #x,
 
 static const char * const bpf_prog_type_strs[] = {
-    BPF_PROG_TYPE_LIST(BPF_PROG_TYPE_STRING_FN)
+	BPF_PROG_TYPE_LIST(BPF_PROG_TYPE_STRING_FN)
 };
 
 static const char * const bpf_attach_type_strs[] = {
-    BPF_ATTACH_TYPE_LIST(BPF_ATTACH_TYPE_STRING_FN)
+	BPF_ATTACH_TYPE_LIST(BPF_ATTACH_TYPE_STRING_FN)
 };
 
 static inline const char *bpf_prog_type_enum_to_str(enum bpf_prog_type type)

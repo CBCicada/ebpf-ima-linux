@@ -769,7 +769,7 @@ static int bpf_process_measurement(struct bpf_prog *prog, char *id, int pcr)
 	struct ima_template_desc *template;
 	struct ima_iint_cache iint = {};
 	struct ima_event_data event_data = { .iint = &iint,
-			                     .filename = id, // BPF program attr->prog_name
+					     .filename = id,
 					     .buf = prog->insnsi,
 					     .buf_len = bpf_prog_insn_size(prog),
 					   };
@@ -791,15 +791,11 @@ static int bpf_process_measurement(struct bpf_prog *prog, char *id, int pcr)
 	iint.ima_hash->length = SHA256_DIGEST_SIZE;
 	memcpy(iint.ima_hash->digest, prog->digest, SHA256_DIGEST_SIZE);
 
-	// TODO (avery): For large programs, maybe consider rehashing?
-	
 	ret = ima_alloc_init_template(&event_data, &entry, template);
 	if (ret < 0) {
 		audit_cause = "alloc_entry";
 		goto err_out;
 	}
-
-	// TODO (avery): Pretty sure event_data.buf is not human readable. Should we still log it?
 
 	ret = ima_store_template(entry, violation, NULL,
 				    event_data.buf, pcr);
@@ -809,9 +805,9 @@ static int bpf_process_measurement(struct bpf_prog *prog, char *id, int pcr)
 	}
 
 err_out:
-	if(ret < 0)
+	if (ret < 0)
 		integrity_audit_message(AUDIT_INTEGRITY_PCR, NULL, id, op,
-			    audit_cause, ret, 0, ret);
+					audit_cause, ret, 0, ret);
 	return ret;
 }
 int bpf_check_blacklist(struct bpf_prog *prog)
@@ -830,11 +826,11 @@ EXPORT_SYMBOL(bpf_check_blacklist);
  *
  * Returns 0 on success
  */
- int ima_bpf_check(struct bpf_prog *prog, char *id, union bpf_attr *attr, bpfptr_t uattr, __u32 uattr_size)
- {
-
+int ima_bpf_check(struct bpf_prog *prog, char *id, union bpf_attr *attr,
+		  bpfptr_t uattr, __u32 uattr_size)
+{
 	int action;
-	struct lsm_prop prop; // TODO (avery): Use LSM properties with eBPF? Do they exist?
+	struct lsm_prop prop;
 	int pcr;
 
 	action = ima_get_action(&nop_mnt_idmap, NULL, current_cred(), &prop,
@@ -844,8 +840,6 @@ EXPORT_SYMBOL(bpf_check_blacklist);
 	if (!pcr)
 		pcr = CONFIG_IMA_MEASURE_PCR_IDX;
 
-	// ebpf signing works as follows: a signed loader loads the actual program
-	// If a program is IMA_APPRAISE, then it must come from a signed bpf loader
 	if (action & IMA_APPRAISE) {
 		int blacklisted;
 
@@ -865,13 +859,11 @@ EXPORT_SYMBOL(bpf_check_blacklist);
 		}
 	}
 
-	// decision: only measure the programs that are not blocked
-	/* Process measurement */
-	if (action & IMA_MEASURE) 
+	if (action & IMA_MEASURE)
 		bpf_process_measurement(prog, id, pcr);
-	
+
 	return 0;
- }
+}
 EXPORT_SYMBOL(ima_bpf_check);
 
 int bpf_check_signing_key_revoked(struct bpf_prog *prog)

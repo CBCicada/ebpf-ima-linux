@@ -187,7 +187,6 @@ int pkcs7_validate_trust(struct pkcs7_message *pkcs7,
 }
 EXPORT_SYMBOL_GPL(pkcs7_validate_trust);
 
-
 int pkcs7_find_signer_in_keyring(struct pkcs7_message *pkcs7,
 				 struct key *keyring)
 {

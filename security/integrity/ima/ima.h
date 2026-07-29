@@ -386,7 +386,8 @@ int ima_get_action(struct mnt_idmap *idmap, struct inode *inode,
 		   const struct cred *cred, struct lsm_prop *prop, int mask,
 		   enum ima_hooks func, int *pcr,
 		   struct ima_template_desc **template_desc,
-		   const char *func_data, unsigned int *allowed_algos, const struct bpf_prog *prog);
+		   const char *func_data, unsigned int *allowed_algos,
+		   const struct bpf_prog *prog);
 int ima_must_measure(struct inode *inode, int mask, enum ima_hooks func);
 int ima_collect_measurement(struct ima_iint_cache *iint, struct file *file,
 			    void *buf, loff_t size, enum hash_algo algo,
@@ -417,14 +418,14 @@ int ima_match_policy(struct mnt_idmap *idmap, struct inode *inode,
 		     const struct cred *cred, struct lsm_prop *prop,
 		     enum ima_hooks func, int mask, int flags, int *pcr,
 		     struct ima_template_desc **template_desc,
-		     const char *func_data, unsigned int *allowed_algos, const struct bpf_prog *prog);
+		     const char *func_data, unsigned int *allowed_algos,
+		     const struct bpf_prog *prog);
 void ima_init_policy(void);
 void ima_update_policy(void);
 void ima_update_policy_flags(void);
 ssize_t ima_parse_add_rule(char *);
 void ima_delete_rules(void);
 int ima_check_policy(void);
-//int ima_bpf_check_policy(enum bpf_prog_type, const char *attach_point);
 void *ima_policy_start(struct seq_file *m, loff_t *pos);
 void *ima_policy_next(struct seq_file *m, void *v, loff_t *pos);
 void ima_policy_stop(struct seq_file *m, void *v);

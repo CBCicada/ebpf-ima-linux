@@ -3044,7 +3044,7 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 		bpf_prog_appraise_against_ima(prog, attr, uattr.is_kernel);
 	}
 
-	#ifdef CONFIG_IMA
+#ifdef CONFIG_IMA
 	if (!attr->signature) {
 		if (uattr.is_kernel && current->bpf_ctx) {
 			prog->aux->is_signed_ima = current->bpf_ctx->is_signed_ima;
@@ -3060,7 +3060,7 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 			}
 		}
 	}
-	#endif
+#endif
 
 	prog->orig_prog = NULL;
 	prog->jited = 0;
@@ -3120,12 +3120,12 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
 	 * Here eBPF program has been verified and is ready 
 	 * for attached, check if policy allows this
 	 */
-	#ifdef CONFIG_IMA
+#ifdef CONFIG_IMA
 	err = ima_bpf_check(prog, attr->prog_name, attr, uattr, uattr_size);
 	if (err < 0)
 		goto free_used_maps;
-	#endif
-	
+#endif
+
 	prog = bpf_prog_select_runtime(prog, &err);
 	if (err < 0)
 		goto free_used_maps;
@@ -4744,19 +4744,19 @@ static int bpf_prog_test_run(const union bpf_attr *attr,
 	if (IS_ERR(prog))
 		return PTR_ERR(prog);
 
-	#ifdef CONFIG_IMA
+#ifdef CONFIG_IMA
 	run_ctx.is_signed_ima = prog->aux->is_signed_ima;
 	run_ctx.sig_blob = prog->aux->sig_blob;
 	run_ctx.sig_blob_size = prog->aux->sig_blob_size;
 	old_ctx = bpf_set_run_ctx(&run_ctx);
-	#endif
+#endif
 
 	if (prog->aux->ops->test_run)
 		ret = prog->aux->ops->test_run(prog, attr, uattr);
 
-	#ifdef CONFIG_IMA
+#ifdef CONFIG_IMA
 	bpf_reset_run_ctx(old_ctx);
-	#endif
+#endif
 
 	bpf_prog_put(prog);
 	return ret;
@@ -5439,22 +5439,22 @@ static int bpf_link_get_info_by_fd(struct file *file,
 
 bool bpf_file_references_prog(struct file *file, struct bpf_prog *prog)
 {
-	// potentially not needed, since we only worry about link
-    if (file->f_op == &bpf_prog_fops) {
-        struct bpf_prog *fp = file->private_data;
-        return fp == prog;
-    }
+	if (file->f_op == &bpf_prog_fops) {
+		struct bpf_prog *fp = file->private_data;
 
-    if (file->f_op == &bpf_link_fops ||
-        file->f_op == &bpf_link_fops_poll) {
-        struct bpf_link *link = file->private_data;
-        return link->prog == prog;
-    }
+		return fp == prog;
+	}
 
-    return false;
+	if (file->f_op == &bpf_link_fops ||
+	    file->f_op == &bpf_link_fops_poll) {
+		struct bpf_link *link = file->private_data;
+
+		return link->prog == prog;
+	}
+
+	return false;
 }
 EXPORT_SYMBOL_GPL(bpf_file_references_prog);
-
 
 static int token_get_info_by_fd(struct file *file,
 				struct bpf_token *token,
@@ -6000,7 +6000,6 @@ again:
 }
 EXPORT_SYMBOL_GPL(bpf_link_get_curr_or_next);
 
-
 void bpf_link_purge_for_prog(struct bpf_prog *target)
 {
 	struct bpf_link **batch;
@@ -6008,7 +6007,6 @@ void bpf_link_purge_for_prog(struct bpf_prog *target)
 	unsigned int id;
 	int capacity = 0, count = 0, i;
 
-	// count under lock
 	spin_lock_bh(&link_idr_lock);
 	idr_for_each_entry(&link_idr, link, id) {
 		if (link->id != 0 && link->prog == target)
@@ -6023,7 +6021,6 @@ void bpf_link_purge_for_prog(struct bpf_prog *target)
 	if (!batch)
 		return;
 
-	// collect the refs
 	spin_lock_bh(&link_idr_lock);
 	idr_for_each_entry(&link_idr, link, id) {
 		if (count == capacity)
@@ -6464,11 +6461,11 @@ int kern_sys_bpf(int cmd, union bpf_attr *attr, unsigned int size)
 			return -EINVAL;
 		}
 
-		#ifdef CONFIG_IMA
+#ifdef CONFIG_IMA
 		run_ctx.run_ctx.is_signed_ima = prog->aux->is_signed_ima;
 		run_ctx.run_ctx.sig_blob = prog->aux->sig_blob;
 		run_ctx.run_ctx.sig_blob_size = prog->aux->sig_blob_size;
-		#endif
+#endif
 
 		run_ctx.bpf_cookie = 0;
 		if (!__bpf_prog_enter_sleepable_recur(prog, &run_ctx)) {

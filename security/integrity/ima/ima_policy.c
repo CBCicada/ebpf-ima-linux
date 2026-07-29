@@ -39,9 +39,9 @@
 #define IMA_EGID	0x4000
 #define IMA_FGROUP	0x8000
 #define IMA_FS_SUBTYPE	0x10000
-#define IMA_EBPF_HOOKS 	0x20000
-#define IMA_EBPF_PROG_TYPES  0x40000
-#define IMA_EBPF_ATTACH_TYPES  0x80000
+#define IMA_EBPF_HOOKS	0x20000
+#define IMA_EBPF_PROG_TYPES	0x40000
+#define IMA_EBPF_ATTACH_TYPES	0x80000
 
 #define UNKNOWN		0
 #define MEASURE		0x0001	/* same as IMA_MEASURE */
@@ -400,7 +400,7 @@ static void ima_lsm_free_rule(struct ima_rule_entry *entry)
 
 static void ima_ebpf_free_rule(struct ima_rule_entry *entry)
 {
-	if(entry->flags & IMA_EBPF_HOOKS)
+	if (entry->flags & IMA_EBPF_HOOKS)
 		kfree(entry->ebpf.hook);
 }
 
@@ -660,19 +660,24 @@ static bool ima_match_rules(struct ima_rule_entry *rule,
 	    !rule->fgroup_op(i_gid_into_vfsgid(idmap, inode),
 			     rule->fgroup))
 		return false;
-	
-	if(rule->flags & IMA_EBPF_HOOKS){
-		if(!prog) return false;
-		if(prog->aux->attach_func_name == NULL) return false;
-		if(strcmp(prog->aux->attach_func_name, rule->ebpf.hook)) return false;
+
+	if (rule->flags & IMA_EBPF_HOOKS) {
+		if (!prog)
+			return false;
+		if (!prog->aux->attach_func_name)
+			return false;
+		if (strcmp(prog->aux->attach_func_name, rule->ebpf.hook))
+			return false;
 	}
-	if (rule->flags & IMA_EBPF_PROG_TYPES){
-		if (!prog) return false;
+	if (rule->flags & IMA_EBPF_PROG_TYPES) {
+		if (!prog)
+			return false;
 		if (rule->ebpf.prog_type != prog->type)
 			return false;
 	}
-	if (rule->flags & IMA_EBPF_ATTACH_TYPES){
-		if (!prog) return false;
+	if (rule->flags & IMA_EBPF_ATTACH_TYPES) {
+		if (!prog)
+			return false;
 		if (rule->ebpf.attach_type != prog->expected_attach_type)
 			return false;
 	}
@@ -784,7 +789,8 @@ int ima_match_policy(struct mnt_idmap *idmap, struct inode *inode,
 		     const struct cred *cred, struct lsm_prop *prop,
 		     enum ima_hooks func, int mask, int flags, int *pcr,
 		     struct ima_template_desc **template_desc,
-		     const char *func_data, unsigned int *allowed_algos, const struct bpf_prog *prog)
+		     const char *func_data, unsigned int *allowed_algos,
+		     const struct bpf_prog *prog)
 {
 	struct ima_rule_entry *entry;
 	int action = 0, actmask = flags | (flags << 1);
@@ -1210,9 +1216,10 @@ static int ima_lsm_rule_init(struct ima_rule_entry *entry,
 	return result;
 }
 
-static int ima_ebpf_rule_init(struct ima_rule_entry *entry, substring_t *args, int ebpf_rule) 
+static int ima_ebpf_rule_init(struct ima_rule_entry *entry, substring_t *args,
+			      int ebpf_rule)
 {
-	char * substring;
+	char *substring;
 	int ret;
 
 	substring = match_strdup(args);
@@ -1238,7 +1245,6 @@ static int ima_ebpf_rule_init(struct ima_rule_entry *entry, substring_t *args, i
 		entry->flags |= IMA_EBPF_ATTACH_TYPES;
 	}
 	return 0;
-
 }
 
 static void ima_log_string_op(struct audit_buffer *ab, char *key, char *value,
@@ -1438,11 +1444,13 @@ static bool ima_validate_rule(struct ima_rule_entry *entry)
 
 		break;
 	case BPF_CHECK:
-		// TODO (avery): add validation logic
-		if (entry->action & ~(MEASURE | DONT_MEASURE | APPRAISE | DONT_APPRAISE))
+		if (entry->action & ~(MEASURE | DONT_MEASURE | APPRAISE |
+				      DONT_APPRAISE))
 			return false;
 
-		if (entry->flags & ~(IMA_FUNC | IMA_UID | IMA_GID | IMA_PCR | IMA_EUID | IMA_EGID | IMA_VALIDATE_ALGOS | IMA_EBPF_HOOKS | IMA_EBPF_PROG_TYPES |
+		if (entry->flags & ~(IMA_FUNC | IMA_UID | IMA_GID | IMA_PCR |
+				     IMA_EUID | IMA_EGID | IMA_VALIDATE_ALGOS |
+				     IMA_EBPF_HOOKS | IMA_EBPF_PROG_TYPES |
 				     IMA_EBPF_ATTACH_TYPES))
 			return false;
 
@@ -2008,16 +2016,16 @@ static int ima_parse_rule(char *rule, struct ima_rule_entry *entry)
 			ima_log_string(ab, "ebpf_hooks", args[0].from);
                         result = ima_ebpf_rule_init(entry, args, EBPF_HOOK);
 			break;
-			
+
 		case Opt_ebpf_prog_type:	
 			ima_log_string(ab, "ebpf_prog_type", args[0].from);
                         result = ima_ebpf_rule_init(entry, args, EBPF_PROG_TYPE);
-            break;
+			break;
 
 		case Opt_ebpf_attach_type:
 			ima_log_string(ab, "ebpf_attach_type", args[0].from);
                         result = ima_ebpf_rule_init(entry, args, EBPF_ATTACH_TYPE);
-            break;
+			break;
 		
 		case Opt_err:
 			ima_log_string(ab, "UNKNOWN", p);
@@ -2424,17 +2432,17 @@ int ima_policy_show(struct seq_file *m, void *v)
 		seq_puts(m, " ");
 	}
 	
-    if (entry->flags & IMA_EBPF_ATTACH_TYPES) {
+	if (entry->flags & IMA_EBPF_ATTACH_TYPES) {
 		seq_puts(m, "ebpf_attach_type=");
 		seq_puts(m, bpf_attach_type_enum_to_str(entry->ebpf.attach_type));
-		seq_puts(m, " ");        
+		seq_puts(m, " ");
 	}
 
 	if (entry->flags & IMA_EBPF_HOOKS) {
-        seq_puts(m, "ebpf_hooks=");
+		seq_puts(m, "ebpf_hooks=");
 		seq_puts(m, entry->ebpf.hook);
 		seq_puts(m, " ");
-    }
+	}
 	
 	rcu_read_unlock();
 	seq_puts(m, "\n");

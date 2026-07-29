@@ -498,34 +498,22 @@ static const struct file_operations ima_measure_policy_ops = {
 	.llseek = generic_file_llseek,
 };
 
-
 /*
  * ima_open_reappraisal_ebpf: sequentialize access to the reappraisal_ebpf file
  */
 static int ima_open_reappraisal_ebpf(struct inode *inode, struct file *filp)
 {
-	// Only allowing write
 	if (!(filp->f_flags & O_WRONLY)) {
 		return -EACCES;
 	}
-	// If policy is being updated, do not allow reappraisal
 	if (test_and_set_bit(IMA_FS_BUSY, &ima_fs_flags))
 		return -EBUSY;
 	return 0;
 }
 
-/*
- * ima_release_reappraisal_ebpf - start using the new measure policy rules.
- *
- * Initially, ima_measure points to the default policy rules, now
- * point to the new policy rules, and remove the securityfs policy file,
- * assuming a valid policy.
- */
 static int ima_release_reappraisal_ebpf(struct inode *inode, struct file *file)
 {
-
 	pr_info("IMA policy reappraised on BPF programs\n");
-	// TODO (avery) maybe add audit message?
 	clear_bit(IMA_FS_BUSY, &ima_fs_flags);
 	return 0;
 }
@@ -570,8 +558,9 @@ static int parse_purge_opts(const char *buf, int *signal,
 	return 0;
 }
 
-static ssize_t ima_trigger_reappraisal_ebpf(struct file *file, const char __user *buf,
-				size_t datalen, loff_t *ppos)
+static ssize_t
+ima_trigger_reappraisal_ebpf(struct file *file, const char __user *buf,
+			     size_t datalen, loff_t *ppos)
 {
 	int signal, action, pcr, ret;
 	unsigned long timeout_ms;
@@ -606,13 +595,15 @@ static ssize_t ima_trigger_reappraisal_ebpf(struct file *file, const char __user
 
 		if (action & IMA_APPRAISE) {
 			int blacklisted = bpf_check_blacklist(prog);
-			int revoked     = bpf_check_signing_key_revoked(prog);
+			int revoked = bpf_check_signing_key_revoked(prog);
 			int link_ret;
+
 			if (blacklisted == 0 && revoked == 0 && prog->aux->is_signed_ima)
 				goto next;
 
 			ret = 0;
-			if (is_cgroup_prog_type(prog->type, prog->expected_attach_type, true)) {
+			if (is_cgroup_prog_type(prog->type,
+						prog->expected_attach_type, true)) {
 				ret = bpf_prog_purge_cgroup_attachments(prog, timeout_ms);
 				if (ret)
 					pr_warn("ima_reappraise: cgroup purge failed for prog id=%u: %d\n",
@@ -715,7 +706,6 @@ int __init ima_fs_init(void)
 		goto out;
 	}
 
-	// Add a file to allow manual re-appraisal of EBPF programs
 	dentry = securityfs_create_file("reappraise_ebpf", S_IWUSR,
 					ima_dir, NULL,
 					&ima_reappraise_ebpf_ops);

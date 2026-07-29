@@ -32,7 +32,7 @@ enum bpf_type {
 
 struct bpf_pin_node {
 	struct list_head list;
-	struct dentry    *dentry;
+	struct dentry *dentry;
 };
 
 static void *bpf_any_get(void *raw, enum bpf_type type)
@@ -827,7 +827,6 @@ static void bpf_pin_list_remove(struct bpf_prog *prog, struct dentry *dentry)
 		}
 	}
 	mutex_unlock(&prog->aux->pin_mutex);
-	// can't find in the list, can only happen if prog is being terminated
 }
 
 static int bpf_unlink(struct inode *dir, struct dentry *dentry)
@@ -849,8 +848,6 @@ static int bpf_unlink(struct inode *dir, struct dentry *dentry)
 	return simple_unlink(dir, dentry);
 }
 
-// move pin_nodes for `link` from old_prog->pin_list to new_prog->pin_list
-// covers BPF_LINK_UPDATE which swaps link->prog without touching pin tracking
 void bpf_pin_rehome_for_link(struct bpf_link *link, struct bpf_prog *old_prog,
 			     struct bpf_prog *new_prog)
 {
@@ -887,7 +884,6 @@ void bpf_unpin_prog(struct bpf_prog *prog)
 	struct bpf_pin_node *node, *tmp;
 	LIST_HEAD(to_unlink);
 
-	// move the link to prevent deadlock with remove
 	mutex_lock(&prog->aux->pin_mutex);
 	list_splice_init(&prog->aux->pin_list, &to_unlink);
 	mutex_unlock(&prog->aux->pin_mutex);
